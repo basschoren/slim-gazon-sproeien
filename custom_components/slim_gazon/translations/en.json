@@ -21,14 +21,19 @@
           "rain_data_sensor": "Rain nowcast data sensor (Buienalarm, optional)",
           "detail_condition_sensor": "Detailed condition sensor (optional)",
           "soil_moisture_sensor": "Soil moisture sensor (optional)",
-          "calc_time": "Daily calculation time"
+          "calc_time": "Daily calculation time",
+          "extra_calc_times": "Extra recalculation times"
         },
         "data_description": {
           "rain_now_sensor": "Used to pause watering during rain. Leave empty to disable rain interruption.",
           "rain_data_sensor": "High-resolution rain nowcast (e.g. sensor.neerslag_buienalarm_regen_data). Used to look ahead and refine the plan; the plan is recalculated several times a day.",
-          "calc_time": "Time at which the day plan is calculated each day (extra recalculations run at 07:00, 11:00, 13:30 and 16:00)."
+          "calc_time": "Time at which the day plan is calculated each day.",
+          "extra_calc_times": "Extra times the plan is recalculated during the day so UV, radiation, temperature and the rain nowcast stay current. Leave empty for none. Use HH:MM."
         }
       }
+    },
+    "error": {
+      "invalid_time": "Use the HH:MM format (e.g. 13:30)."
     }
   },
   "options": {
@@ -52,9 +57,13 @@
           "rain_data_sensor": "Rain nowcast data sensor (Buienalarm, optional)",
           "detail_condition_sensor": "Detailed condition sensor (optional)",
           "soil_moisture_sensor": "Soil moisture sensor (optional)",
-          "calc_time": "Daily calculation time"
+          "calc_time": "Daily calculation time",
+          "extra_calc_times": "Extra recalculation times"
         }
       }
+    },
+    "error": {
+      "invalid_time": "Use the HH:MM format (e.g. 13:30)."
     }
   },
   "entity": {

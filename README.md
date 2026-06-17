@@ -68,9 +68,10 @@ Bij het toevoegen kies je je weer-entiteit, sensoren en de twee
 sproeier-schakelaars. Alles wat je hier kiest kun je later wijzigen via
 **Configureren** op de integratiekaart (optioneel veld leegmaken = die sensor
 niet meer gebruiken). Ook de **tijd van de dagelijkse berekening** (standaard
-04:00) stel je hier in. Naast die hoofdtijd herberekent de integratie het plan
-automatisch nog **4× per dag** (07:00, 11:00, 13:30 en 16:00), zodat UV,
-straling, temperatuur en de regen-nowcast actueel blijven.
+04:00) stel je hier in. Daarnaast kun je **extra rekentijden** opgeven
+(standaard 07:00, 11:00, 13:30 en 16:00) zodat UV, straling, temperatuur en de
+regen-nowcast overdag actueel blijven — voeg tijden toe of verwijder ze, of laat
+de lijst leeg voor geen extra herberekeningen.
 
 Alle overige instellingen (sproeisnelheden, drempels, factoren) zijn
 **entiteiten** geworden, zodat je ze vanaf een dashboard kunt aanpassen.
@@ -114,10 +115,11 @@ voor een eigen dashboard.
 
 ## Hoe het plan werkt (kort)
 
-1. Op de ingestelde tijd (04:00) — en daarna nog om 07:00, 11:00, 13:30 en 16:00 —
-   haalt de integratie de uur- en dagverwachting op, leest alle sensoren en
-   (indien ingesteld) de hoge-resolutie regen-nowcast. Elke herberekening past
-   het plan voor de **resterende** beurten aan op de actuele situatie.
+1. Op de hoofdtijd (04:00) — en op de extra rekentijden (standaard 07:00, 11:00,
+   13:30 en 16:00, instelbaar) — haalt de integratie de uur- en dagverwachting
+   op, leest alle sensoren en (indien ingesteld) de hoge-resolutie regen-nowcast.
+   Elke herberekening past het plan voor de **resterende** beurten aan op de
+   actuele situatie.
 2. Op basis van de **max-temperatuur** wordt een basishoeveelheid water en een
    aantal beurten bepaald, vermenigvuldigd met factoren voor **grasfase** en
    **weer** (lucht­vochtigheid, UV/straling, bewolking, wind).

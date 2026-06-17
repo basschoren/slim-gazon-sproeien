@@ -45,10 +45,11 @@ from .const import (
     CONF_WEATHER,
     CONF_WIND,
     DEFAULT_CALC_TIME,
+    CONF_EXTRA_CALC_TIMES,
+    DEFAULT_EXTRA_CALC_TIMES,
     DEFAULT_MASTER,
     DEFAULT_PHASE,
     DEFAULT_TEST,
-    EXTRA_CALC_TIMES,
     KEY_LAST_EXECUTED,
     KEY_MASTER,
     KEY_PHASE,
@@ -664,10 +665,11 @@ class LawnCoordinator:
             )
         )
         # Extra herberekeningen overdag voor een actueler plan.
-        for extra in EXTRA_CALC_TIMES:
+        for extra in self._extra_calc_times():
             try:
-                extra_hour, extra_minute = (int(part) for part in extra.split(":"))
-            except (ValueError, TypeError):
+                parts = str(extra).split(":")
+                extra_hour, extra_minute = int(parts[0]), int(parts[1])
+            except (ValueError, IndexError):
                 continue
             self._unsubs.append(
                 async_track_time_change(
@@ -689,6 +691,13 @@ class LawnCoordinator:
             return parts[0], parts[1]
         except (ValueError, IndexError):
             return 4, 0
+
+    def _extra_calc_times(self) -> list[str]:
+        """Extra rekentijden uit de config (lege lijst = geen, ontbreekt = default)."""
+        value = self.config.get(CONF_EXTRA_CALC_TIMES)
+        if value is None:
+            return list(DEFAULT_EXTRA_CALC_TIMES)
+        return list(value)
 
     async def _async_daily_calc(self, now: datetime) -> None:
         await self.async_calculate_plan()
