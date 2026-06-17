@@ -1,0 +1,7 @@
+# Normaliseer alle tekstbestanden naar LF in de repository.
+* text=auto eol=lf
+
+# Binaire bestanden ongemoeid laten.
+*.png binary
+*.jpg binary
+*.ico binary

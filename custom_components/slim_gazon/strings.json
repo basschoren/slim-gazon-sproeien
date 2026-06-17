@@ -1,0 +1,70 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Smart Lawn Watering",
+        "description": "Select the weather entity, the sensors and the two sprinkler switches. Only weather, temperature and the two switches are required; the rest is optional and improves the plan.",
+        "data": {
+          "name": "Name",
+          "weather_entity": "Weather entity",
+          "temp_sensor": "Temperature sensor",
+          "big_switch": "Big sprinkler switch",
+          "small_switch": "Small sprinkler switch",
+          "temp_max_sensor": "Max temperature today (optional)",
+          "wind_sensor": "Wind speed sensor (optional)",
+          "humidity_sensor": "Humidity sensor (optional)",
+          "uv_sensor": "UV index sensor (optional)",
+          "solar_sensor": "Global solar radiation sensor (optional)",
+          "rain_now_sensor": "Rain intensity now sensor (optional)",
+          "rain_24h_sensor": "Rain last 24h sensor (optional)",
+          "rain_forecast_sensor": "Expected rain today sensor (optional)",
+          "detail_condition_sensor": "Detailed condition sensor (optional)",
+          "soil_moisture_sensor": "Soil moisture sensor (optional)",
+          "calc_time": "Daily calculation time"
+        },
+        "data_description": {
+          "rain_now_sensor": "Used to pause watering during rain. Leave empty to disable rain interruption.",
+          "calc_time": "Time at which the day plan is calculated each day."
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Smart Lawn Watering settings",
+        "description": "Change the chosen entities and the daily calculation time. Clear an optional field to stop using that sensor.",
+        "data": {
+          "weather_entity": "Weather entity",
+          "temp_sensor": "Temperature sensor",
+          "big_switch": "Big sprinkler switch",
+          "small_switch": "Small sprinkler switch",
+          "temp_max_sensor": "Max temperature today (optional)",
+          "wind_sensor": "Wind speed sensor (optional)",
+          "humidity_sensor": "Humidity sensor (optional)",
+          "uv_sensor": "UV index sensor (optional)",
+          "solar_sensor": "Global solar radiation sensor (optional)",
+          "rain_now_sensor": "Rain intensity now sensor (optional)",
+          "rain_24h_sensor": "Rain last 24h sensor (optional)",
+          "rain_forecast_sensor": "Expected rain today sensor (optional)",
+          "detail_condition_sensor": "Detailed condition sensor (optional)",
+          "soil_moisture_sensor": "Soil moisture sensor (optional)",
+          "calc_time": "Daily calculation time"
+        }
+      }
+    }
+  },
+  "entity": {
+    "select": {
+      "fase": {
+        "state": {
+          "pas_ingezaaid": "Just sown",
+          "kiemend": "Germinating",
+          "jong_gras": "Young grass",
+          "bestaand_gras": "Established grass",
+          "alleen_handmatig": "Manual only / off"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,165 @@
+calculate_plan:
+  name: Bereken dagplan
+  description: >-
+    Berekent direct een nieuw dagplan op basis van het weer en de instellingen.
+    Optionele test-velden overschrijven de echte meetwaarden zonder te sproeien.
+  fields:
+    test_fase:
+      name: Test fase
+      required: false
+      selector:
+        select:
+          options:
+            - pas_ingezaaid
+            - kiemend
+            - jong_gras
+            - bestaand_gras
+            - alleen_handmatig
+    test_temp_max:
+      name: Test maximum temperatuur
+      required: false
+      selector:
+        number:
+          min: -10
+          max: 50
+          step: 0.5
+          unit_of_measurement: "°C"
+    test_regen_vandaag:
+      name: Test regen verwacht vandaag
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 50
+          step: 0.1
+          unit_of_measurement: mm
+    test_regen_24u:
+      name: Test regen laatste 24 uur
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 50
+          step: 0.1
+          unit_of_measurement: mm
+    test_wind:
+      name: Test wind
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          unit_of_measurement: km/h
+    test_automatisering_aan:
+      name: Test automatisering aan
+      required: false
+      selector:
+        boolean:
+
+run_cycle:
+  name: Sproeibeurt uitvoeren
+  description: Voert een sproeibeurt uit met alle veiligheidschecks.
+  fields:
+    big_minutes:
+      name: Grote sproeier minuten
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 60
+          step: 0.1
+          unit_of_measurement: min
+          mode: box
+    small_minutes:
+      name: Kleine sproeier minuten
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 60
+          step: 0.1
+          unit_of_measurement: min
+          mode: box
+    reason:
+      name: Reden
+      required: false
+      selector:
+        text:
+    slot:
+      name: Label
+      required: false
+      selector:
+        text:
+    force_test:
+      name: Testmodus forceren
+      required: false
+      selector:
+        boolean:
+
+start_big:
+  name: Start grote sproeier
+  description: Start de grote sproeier voor een aantal minuten.
+  fields:
+    minutes:
+      name: Minuten
+      required: true
+      selector:
+        number:
+          min: 0.1
+          max: 60
+          step: 0.1
+          unit_of_measurement: min
+          mode: box
+
+start_small:
+  name: Start kleine sproeier
+  description: Start de kleine sproeier voor een aantal minuten.
+  fields:
+    minutes:
+      name: Minuten
+      required: true
+      selector:
+        number:
+          min: 0.1
+          max: 60
+          step: 0.1
+          unit_of_measurement: min
+          mode: box
+
+manual_short:
+  name: Handmatig kort sproeien
+  description: Korte sproeibeurt (grote 5 min, kleine 1,5 min).
+
+manual_normal:
+  name: Handmatig normaal sproeien
+  description: Normale sproeibeurt (grote 12 min, kleine 3 min).
+
+stop_all:
+  name: Stop alle sproeiers
+  description: Zet beide sproeiers uit en annuleert een lopende beurt.
+
+test_scenario:
+  name: Testscenario uitvoeren
+  description: >-
+    Berekent een dagplan voor een gesimuleerd weerscenario in testmodus
+    (er wordt niet echt gesproeid).
+  fields:
+    scenario:
+      name: Scenario
+      required: true
+      selector:
+        select:
+          options:
+            - 10c_geen_regen
+            - 15c_geen_regen
+            - 20c_geen_regen
+            - 25c_geen_regen
+            - 30c_geen_regen
+            - 35c_geen_regen
+            - 40c_geen_regen
+            - 30c_5mm_regen_verwacht
+            - 30c_5mm_regen_24u
+            - 35c_harde_wind
+            - automatisering_uit
+            - sensoren_onbekend

@@ -1,0 +1,14 @@
+{
+  "domain": "slim_gazon",
+  "name": "Slim Gazon Sproeien",
+  "after_dependencies": ["weather"],
+  "codeowners": ["@basschoren"],
+  "config_flow": true,
+  "dependencies": [],
+  "documentation": "https://github.com/basschoren/slim-gazon-sproeien",
+  "integration_type": "service",
+  "iot_class": "calculated",
+  "issue_tracker": "https://github.com/basschoren/slim-gazon-sproeien/issues",
+  "requirements": [],
+  "version": "1.0.0"
+}

@@ -1,0 +1,70 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Slim Gazon Sproeien",
+        "description": "Kies de weer-entiteit, de sensoren en de twee sproeier-schakelaars. Alleen weer, temperatuur en de twee schakelaars zijn verplicht; de rest is optioneel en maakt het plan nauwkeuriger.",
+        "data": {
+          "name": "Naam",
+          "weather_entity": "Weer-entiteit",
+          "temp_sensor": "Temperatuursensor",
+          "big_switch": "Grote sproeier (schakelaar)",
+          "small_switch": "Kleine sproeier (schakelaar)",
+          "temp_max_sensor": "Max temperatuur vandaag (optioneel)",
+          "wind_sensor": "Windsnelheidsensor (optioneel)",
+          "humidity_sensor": "Luchtvochtigheidsensor (optioneel)",
+          "uv_sensor": "UV-index sensor (optioneel)",
+          "solar_sensor": "Globale stralingssensor (optioneel)",
+          "rain_now_sensor": "Regenintensiteit nu (optioneel)",
+          "rain_24h_sensor": "Regen laatste 24u (optioneel)",
+          "rain_forecast_sensor": "Verwachte regen vandaag (optioneel)",
+          "detail_condition_sensor": "Gedetailleerde weerconditie (optioneel)",
+          "soil_moisture_sensor": "Bodemvochtsensor (optioneel)",
+          "calc_time": "Tijd dagelijkse berekening"
+        },
+        "data_description": {
+          "rain_now_sensor": "Wordt gebruikt om te pauzeren bij regen. Leeg laten schakelt regenonderbreking uit.",
+          "calc_time": "Tijdstip waarop elke dag het dagplan wordt berekend."
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Instellingen Slim Gazon Sproeien",
+        "description": "Pas de gekozen entiteiten en de berekentijd aan. Maak een optioneel veld leeg om die sensor niet meer te gebruiken.",
+        "data": {
+          "weather_entity": "Weer-entiteit",
+          "temp_sensor": "Temperatuursensor",
+          "big_switch": "Grote sproeier (schakelaar)",
+          "small_switch": "Kleine sproeier (schakelaar)",
+          "temp_max_sensor": "Max temperatuur vandaag (optioneel)",
+          "wind_sensor": "Windsnelheidsensor (optioneel)",
+          "humidity_sensor": "Luchtvochtigheidsensor (optioneel)",
+          "uv_sensor": "UV-index sensor (optioneel)",
+          "solar_sensor": "Globale stralingssensor (optioneel)",
+          "rain_now_sensor": "Regenintensiteit nu (optioneel)",
+          "rain_24h_sensor": "Regen laatste 24u (optioneel)",
+          "rain_forecast_sensor": "Verwachte regen vandaag (optioneel)",
+          "detail_condition_sensor": "Gedetailleerde weerconditie (optioneel)",
+          "soil_moisture_sensor": "Bodemvochtsensor (optioneel)",
+          "calc_time": "Tijd dagelijkse berekening"
+        }
+      }
+    }
+  },
+  "entity": {
+    "select": {
+      "fase": {
+        "state": {
+          "pas_ingezaaid": "Pas ingezaaid",
+          "kiemend": "Kiemend",
+          "jong_gras": "Jong gras",
+          "bestaand_gras": "Bestaand gras",
+          "alleen_handmatig": "Alleen handmatig / uit"
+        }
+      }
+    }
+  }
+}
