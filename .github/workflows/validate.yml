@@ -23,3 +23,6 @@ jobs:
       - uses: hacs/action@main
         with:
           category: integration
+          # "brands" vereist opname in home-assistant/brands (alleen nodig voor de
+          # officiele HACS-winkel, niet voor installatie via aangepaste repository).
+          ignore: brands
