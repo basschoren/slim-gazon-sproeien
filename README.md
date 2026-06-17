@@ -127,10 +127,16 @@ en is een 1-op-1 vertaling van het oorspronkelijke YAML-package.
 
 ## Een eigen dashboard
 
-De integratie werkt volledig zelfstandig. Wil je later een eigen dashboard om
-het plan te tonen en handmatig te bedienen, gebruik dan de `sensor.*_dagplan`
-(attribuut `slots`) en de bedienings-entiteiten hierboven. Een voorbeeld-Lovelace
-kaart kan later worden toegevoegd.
+Wil je het plan overzichtelijk tonen en handmatig bedienen? Gebruik de
+bijbehorende Lovelace-kaart
+**[Slim Gazon Card](https://github.com/basschoren/slim-gazon-card)** — ook via
+HACS te installeren (categorie *Dashboard*):
+
+![Slim Gazon Card — dagplan-overzicht en handmatige bediening](images/preview.png)
+
+De kaart toont het dagplan (status, sproeischema, onderbouwing en meetwaarden) en
+biedt volledige handmatige bediening. Liever zelf bouwen? Alle gegevens zitten in
+`sensor.*_dagplan` (attribuut `slots`) en de bedienings-entiteiten hierboven.
 
 ## Licentie
 
