@@ -19,7 +19,11 @@ from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import storage
 from homeassistant.helpers.dispatcher import async_dispatcher_send
-from homeassistant.helpers.event import async_call_later, async_track_time_change
+from homeassistant.helpers.event import (
+    async_call_later,
+    async_track_state_change_event,
+    async_track_time_change,
+)
 from homeassistant.helpers.start import async_at_started
 from homeassistant.util import dt as dt_util
 
@@ -29,6 +33,7 @@ from .const import (
     CONF_DETAIL,
     CONF_HUMIDITY,
     CONF_RAIN_24H,
+    CONF_RAIN_DATA,
     CONF_RAIN_FORECAST,
     CONF_RAIN_NOW,
     CONF_SMALL_SWITCH,
@@ -43,6 +48,7 @@ from .const import (
     DEFAULT_MASTER,
     DEFAULT_PHASE,
     DEFAULT_TEST,
+    EXTRA_CALC_TIMES,
     KEY_LAST_EXECUTED,
     KEY_MASTER,
     KEY_PHASE,
@@ -50,11 +56,13 @@ from .const import (
     KEY_SOW_DATE,
     KEY_TEST,
     KEY_VALUES,
+    NOWCAST_ONSET_MMH,
     NUMBER_DEFAULTS,
     PHASE_MANUAL,
     SIGNAL_UPDATE,
     STORE_VERSION,
 )
+from .nowcast import NowcastResult, parse_nowcast
 from .planner import PlanInputs, PlanParams, calculate
 
 _LOGGER = logging.getLogger(__name__)
@@ -146,6 +154,20 @@ class LawnCoordinator:
         self._setup_schedules()
         # Veiligheid: zet sproeiers uit zodra Home Assistant gestart is.
         self._unsubs.append(async_at_started(self.hass, self._async_startup_safety))
+
+        # Ververs de nowcast-sensor zodra de bron-sensor verandert.
+        rain_data = self.conf(CONF_RAIN_DATA)
+        if rain_data:
+            self._unsubs.append(
+                async_track_state_change_event(
+                    self.hass, [rain_data], self._on_rain_data
+                )
+            )
+
+    @callback
+    def _on_rain_data(self, event) -> None:
+        """De Buienalarm-sensor is bijgewerkt; hertekenen de entiteiten."""
+        self._notify_listeners()
 
     async def async_save(self) -> None:
         """Sla de huidige staat op."""
@@ -249,6 +271,29 @@ class LawnCoordinator:
         """Huidige regenintensiteit (mm/h)."""
         return self._state_float(CONF_RAIN_NOW, 0.0)
 
+    def _nowcast(self) -> NowcastResult | None:
+        """Decodeer de optionele Buienalarm nowcast-sensor."""
+        entity_id = self.conf(CONF_RAIN_DATA)
+        if not entity_id:
+            return None
+        state = self.hass.states.get(entity_id)
+        if state is None or state.state in UNAVAILABLE_STATES:
+            return None
+        return parse_nowcast(dict(state.attributes), dt_util.now(), NOWCAST_ONSET_MMH)
+
+    def nowcast_summary(self) -> dict | None:
+        """Samenvatting van de nowcast voor de sensor (None als niet beschikbaar)."""
+        result = self._nowcast()
+        if result is None or not result.available:
+            return None
+        return {
+            "window_mm": result.window_mm,
+            "today_mm": result.today_mm,
+            "before_noon_mm": result.before_noon_mm,
+            "minutes_until_rain": result.minutes_until_rain,
+            "horizon_min": result.horizon_min,
+        }
+
     def _switch_unavailable(self) -> bool:
         for entity_id in (self.big_switch, self.small_switch):
             if not entity_id:
@@ -311,13 +356,24 @@ class LawnCoordinator:
         temp_now = self._state_float(CONF_TEMP, 16.0)
         temp_max = float(overrides.get("temp_max", self._state_float(CONF_TEMP_MAX, temp_now)))
 
+        # Nowcast (Buienalarm) geeft hoge-resolutie regen vooruit; gebruik die om
+        # de verwachte regen van vandaag en vóór de middag preciezer te maken.
+        nowcast = self._nowcast()
+        nowcast_today = nowcast.today_mm if nowcast and nowcast.available else 0.0
+        nowcast_before_noon = (
+            nowcast.before_noon_mm if nowcast and nowcast.available else 0.0
+        )
+
         sensor_regen_vandaag = self._state_float(CONF_RAIN_FORECAST, 0.0)
         regen_vandaag = float(
             overrides.get(
                 "regen_vandaag",
-                round(max(sensor_regen_vandaag, forecast_regen_vandaag), 1),
+                round(
+                    max(sensor_regen_vandaag, forecast_regen_vandaag, nowcast_today), 1
+                ),
             )
         )
+        forecast_regen_middag = max(forecast_regen_middag, nowcast_before_noon)
         regen_24u = float(overrides.get("regen_24u", self._state_float(CONF_RAIN_24H, 0.0)))
         wind_now = self._state_float(CONF_WIND, 0.0)
         wind_dag_max = float(overrides.get("wind", round(max(forecast_wind_max, wind_now), 1)))
@@ -381,6 +437,11 @@ class LawnCoordinator:
             "bodemvocht": bodemvocht,
             "bewolkt_of_nat": bewolkt_of_nat,
             "fase": fase,
+            "nowcast_vandaag_mm": nowcast_today if nowcast else None,
+            "nowcast_voor_middag_mm": nowcast_before_noon if nowcast else None,
+            "nowcast_minuten_tot_regen": (
+                nowcast.minutes_until_rain if nowcast and nowcast.available else None
+            ),
         }
 
         self.plan = plan_dict
@@ -602,6 +663,21 @@ class LawnCoordinator:
                 self.hass, self._async_daily_calc, hour=hour, minute=minute, second=0
             )
         )
+        # Extra herberekeningen overdag voor een actueler plan.
+        for extra in EXTRA_CALC_TIMES:
+            try:
+                extra_hour, extra_minute = (int(part) for part in extra.split(":"))
+            except (ValueError, TypeError):
+                continue
+            self._unsubs.append(
+                async_track_time_change(
+                    self.hass,
+                    self._async_daily_calc,
+                    hour=extra_hour,
+                    minute=extra_minute,
+                    second=0,
+                )
+            )
         self._unsubs.append(
             async_track_time_change(self.hass, self._async_minute_tick, second=0)
         )

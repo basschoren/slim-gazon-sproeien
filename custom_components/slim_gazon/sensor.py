@@ -18,12 +18,30 @@ from homeassistant.helpers.typing import StateType
 from homeassistant.util import dt as dt_util
 
 from . import LawnConfigEntry
+from .const import CONF_RAIN_DATA
 from .coordinator import LawnCoordinator
 from .entity import LawnEntity
 
 
 def _plan(coordinator: LawnCoordinator, key: str, default=None):
     return (coordinator.plan or {}).get(key, default)
+
+
+def _nowcast_state(coordinator: LawnCoordinator):
+    summary = coordinator.nowcast_summary()
+    return None if summary is None else summary["window_mm"]
+
+
+def _nowcast_attributes(coordinator: LawnCoordinator) -> dict | None:
+    summary = coordinator.nowcast_summary()
+    if summary is None:
+        return None
+    return {
+        "minuten_tot_regen": summary["minutes_until_rain"],
+        "horizon_minuten": summary["horizon_min"],
+        "voor_de_middag_mm": summary["before_noon_mm"],
+        "vandaag_mm": summary["today_mm"],
+    }
 
 
 def _last_calc(coordinator: LawnCoordinator) -> datetime | None:
@@ -136,6 +154,17 @@ SENSORS: tuple[LawnSensorDescription, ...] = (
     ),
 )
 
+# Alleen toegevoegd wanneer er een nowcast-sensor is geconfigureerd.
+NOWCAST_SENSOR = LawnSensorDescription(
+    key="rain_nowcast",
+    name="Regen nowcast (komend)",
+    icon="mdi:weather-pouring",
+    native_unit_of_measurement="mm",
+    state_class=SensorStateClass.MEASUREMENT,
+    value_fn=_nowcast_state,
+    attr_fn=_nowcast_attributes,
+)
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -144,7 +173,10 @@ async def async_setup_entry(
 ) -> None:
     """Zet de sensor entiteiten op."""
     coordinator = entry.runtime_data
-    async_add_entities(LawnSensor(coordinator, desc) for desc in SENSORS)
+    descriptions = list(SENSORS)
+    if coordinator.conf(CONF_RAIN_DATA):
+        descriptions.append(NOWCAST_SENSOR)
+    async_add_entities(LawnSensor(coordinator, desc) for desc in descriptions)
 
 
 class LawnSensor(LawnEntity, SensorEntity):

@@ -36,6 +36,7 @@ CONF_SOLAR = "solar_sensor"
 CONF_RAIN_NOW = "rain_now_sensor"
 CONF_RAIN_24H = "rain_24h_sensor"
 CONF_RAIN_FORECAST = "rain_forecast_sensor"
+CONF_RAIN_DATA = "rain_data_sensor"
 CONF_DETAIL = "detail_condition_sensor"
 CONF_SOIL = "soil_moisture_sensor"
 CONF_BIG_SWITCH = "big_switch"
@@ -44,6 +45,14 @@ CONF_CALC_TIME = "calc_time"
 
 DEFAULT_CALC_TIME = "04:00:00"
 DEFAULT_NAME = "Slim Gazon"
+
+# Extra herberekeningen overdag (naast de hoofdtijd, standaard 04:00). Zo blijven
+# UV/straling/temperatuur en de nowcast-regen actueel en past het plan zich aan
+# de werkelijke dag aan. Tijden bewust naast de sproeislots gekozen.
+EXTRA_CALC_TIMES: tuple[str, ...] = ("07:00", "11:00", "13:30", "16:00")
+
+# Vanaf welke intensiteit (mm/h) we "het gaat regenen" rekenen in de nowcast.
+NOWCAST_ONSET_MMH = 0.1
 
 # -- Grasfases ---------------------------------------------------------------
 PHASE_NEW = "pas_ingezaaid"

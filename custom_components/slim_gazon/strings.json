@@ -18,13 +18,15 @@
           "rain_now_sensor": "Rain intensity now sensor (optional)",
           "rain_24h_sensor": "Rain last 24h sensor (optional)",
           "rain_forecast_sensor": "Expected rain today sensor (optional)",
+          "rain_data_sensor": "Rain nowcast data sensor (Buienalarm, optional)",
           "detail_condition_sensor": "Detailed condition sensor (optional)",
           "soil_moisture_sensor": "Soil moisture sensor (optional)",
           "calc_time": "Daily calculation time"
         },
         "data_description": {
           "rain_now_sensor": "Used to pause watering during rain. Leave empty to disable rain interruption.",
-          "calc_time": "Time at which the day plan is calculated each day."
+          "rain_data_sensor": "High-resolution rain nowcast (e.g. sensor.neerslag_buienalarm_regen_data). Used to look ahead and refine the plan; the plan is recalculated several times a day.",
+          "calc_time": "Time at which the day plan is calculated each day (extra recalculations run at 07:00, 11:00, 13:30 and 16:00)."
         }
       }
     }
@@ -47,6 +49,7 @@
           "rain_now_sensor": "Rain intensity now sensor (optional)",
           "rain_24h_sensor": "Rain last 24h sensor (optional)",
           "rain_forecast_sensor": "Expected rain today sensor (optional)",
+          "rain_data_sensor": "Rain nowcast data sensor (Buienalarm, optional)",
           "detail_condition_sensor": "Detailed condition sensor (optional)",
           "soil_moisture_sensor": "Soil moisture sensor (optional)",
           "calc_time": "Daily calculation time"

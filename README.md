@@ -32,11 +32,19 @@ bedient.
 
 Optioneel (maken het plan nauwkeuriger): max-temperatuur vandaag, wind,
 luchtvochtigheid, UV, globale straling, regenintensiteit nu, regen laatste 24u,
-verwachte regen vandaag, gedetailleerde weerconditie en bodemvocht.
+verwachte regen vandaag, **regen-nowcast (Buienalarm)**, gedetailleerde
+weerconditie en bodemvocht.
 
 > 💡 De **regenintensiteit-nu** sensor wordt gebruikt om tijdens een beurt te
 > pauzeren als het begint te regenen. Laat je hem leeg, dan is die
 > regenonderbreking uitgeschakeld.
+
+> 🌧️ De **regen-nowcast** sensor (bijv. `sensor.neerslag_buienalarm_regen_data`
+> uit de [Neerslag-app](https://github.com/aex351/home-assistant-neerslag-app))
+> geeft hoge-resolutie regen voor de komende ~2 uur. De integratie leest daaruit
+> *hoeveel* en *hoelaat* er regen valt en verfijnt daarmee het plan. Omdat het
+> plan **meerdere keren per dag** wordt herberekend (zie hieronder), past het
+> zich aan op werkelijke regen die eraan komt.
 
 ## Installatie
 
@@ -60,7 +68,9 @@ Bij het toevoegen kies je je weer-entiteit, sensoren en de twee
 sproeier-schakelaars. Alles wat je hier kiest kun je later wijzigen via
 **Configureren** op de integratiekaart (optioneel veld leegmaken = die sensor
 niet meer gebruiken). Ook de **tijd van de dagelijkse berekening** (standaard
-04:00) stel je hier in.
+04:00) stel je hier in. Naast die hoofdtijd herberekent de integratie het plan
+automatisch nog **4× per dag** (07:00, 11:00, 13:30 en 16:00), zodat UV,
+straling, temperatuur en de regen-nowcast actueel blijven.
 
 Alle overige instellingen (sproeisnelheden, drempels, factoren) zijn
 **entiteiten** geworden, zodat je ze vanaf een dashboard kunt aanpassen.
@@ -81,7 +91,9 @@ De integratie maakt één apparaat met o.a.:
 - `binary_sensor` — **Sproeien bezig**
 - `sensor` — Status, Dagplan (met alle slots als attribuut), Reden, Temperatuur range,
   Gepland totaal mm, Netto behoefte mm, Geplande grote/kleine minuten,
-  Eerstvolgende beurt, Geadviseerde fase, Laatste berekening
+  Eerstvolgende beurt, Geadviseerde fase, Laatste berekening, en — als er een
+  nowcast-sensor is gekozen — **Regen nowcast (komend)** met als attribuut
+  `minuten_tot_regen`
 
 Het sensor **Dagplan** bevat in zijn attributen het volledige plan (actieve
 slots met tijd, mm en minuten, plus de gebruikte meetwaarden) — handig als basis
@@ -102,8 +114,10 @@ voor een eigen dashboard.
 
 ## Hoe het plan werkt (kort)
 
-1. Op de ingestelde tijd (04:00) haalt de integratie de uur- en dagverwachting
-   op en leest alle sensoren.
+1. Op de ingestelde tijd (04:00) — en daarna nog om 07:00, 11:00, 13:30 en 16:00 —
+   haalt de integratie de uur- en dagverwachting op, leest alle sensoren en
+   (indien ingesteld) de hoge-resolutie regen-nowcast. Elke herberekening past
+   het plan voor de **resterende** beurten aan op de actuele situatie.
 2. Op basis van de **max-temperatuur** wordt een basishoeveelheid water en een
    aantal beurten bepaald, vermenigvuldigd met factoren voor **grasfase** en
    **weer** (lucht­vochtigheid, UV/straling, bewolking, wind).

@@ -18,13 +18,15 @@
           "rain_now_sensor": "Regenintensiteit nu (optioneel)",
           "rain_24h_sensor": "Regen laatste 24u (optioneel)",
           "rain_forecast_sensor": "Verwachte regen vandaag (optioneel)",
+          "rain_data_sensor": "Regen nowcast-sensor (Buienalarm, optioneel)",
           "detail_condition_sensor": "Gedetailleerde weerconditie (optioneel)",
           "soil_moisture_sensor": "Bodemvochtsensor (optioneel)",
           "calc_time": "Tijd dagelijkse berekening"
         },
         "data_description": {
           "rain_now_sensor": "Wordt gebruikt om te pauzeren bij regen. Leeg laten schakelt regenonderbreking uit.",
-          "calc_time": "Tijdstip waarop elke dag het dagplan wordt berekend."
+          "rain_data_sensor": "Hoge-resolutie regen-nowcast (bijv. sensor.neerslag_buienalarm_regen_data). Wordt gebruikt om vooruit te kijken en het plan te verfijnen; het plan wordt meerdere keren per dag herberekend.",
+          "calc_time": "Tijdstip waarop elke dag het dagplan wordt berekend (extra herberekeningen om 07:00, 11:00, 13:30 en 16:00)."
         }
       }
     }
@@ -47,6 +49,7 @@
           "rain_now_sensor": "Regenintensiteit nu (optioneel)",
           "rain_24h_sensor": "Regen laatste 24u (optioneel)",
           "rain_forecast_sensor": "Verwachte regen vandaag (optioneel)",
+          "rain_data_sensor": "Regen nowcast-sensor (Buienalarm, optioneel)",
           "detail_condition_sensor": "Gedetailleerde weerconditie (optioneel)",
           "soil_moisture_sensor": "Bodemvochtsensor (optioneel)",
           "calc_time": "Tijd dagelijkse berekening"
