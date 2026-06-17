@@ -66,5 +66,48 @@
         }
       }
     }
+  },
+  "services": {
+    "calculate_plan": {
+      "name": "Bereken dagplan",
+      "description": "Berekent direct een nieuw dagplan op basis van het weer en de instellingen. Optionele test-velden overschrijven de echte meetwaarden zonder te sproeien.",
+      "fields": {
+        "test_fase": {"name": "Test fase", "description": "Overschrijf de grasfase."},
+        "test_temp_max": {"name": "Test maximum temperatuur", "description": "Overschrijf de maximumtemperatuur van vandaag."},
+        "test_regen_vandaag": {"name": "Test regen verwacht vandaag", "description": "Overschrijf de verwachte regen van vandaag."},
+        "test_regen_24u": {"name": "Test regen laatste 24 uur", "description": "Overschrijf de regen van de laatste 24 uur."},
+        "test_wind": {"name": "Test wind", "description": "Overschrijf de maximale windsnelheid."},
+        "test_automatisering_aan": {"name": "Test automatisering aan", "description": "Overschrijf de hoofdschakelaar."}
+      }
+    },
+    "run_cycle": {
+      "name": "Sproeibeurt uitvoeren",
+      "description": "Voert een sproeibeurt uit met alle veiligheidschecks.",
+      "fields": {
+        "big_minutes": {"name": "Grote sproeier minuten", "description": "Looptijd voor de grote sproeier."},
+        "small_minutes": {"name": "Kleine sproeier minuten", "description": "Looptijd voor de kleine sproeier."},
+        "reason": {"name": "Reden", "description": "Vrije tekst die bij de beurt wordt gelogd."},
+        "slot": {"name": "Label", "description": "Label dat in meldingen en logboek verschijnt."},
+        "force_test": {"name": "Testmodus forceren", "description": "Behandel deze beurt als dry-run."}
+      }
+    },
+    "start_big": {
+      "name": "Start grote sproeier",
+      "description": "Start de grote sproeier voor een aantal minuten.",
+      "fields": {"minutes": {"name": "Minuten", "description": "Looptijd in minuten."}}
+    },
+    "start_small": {
+      "name": "Start kleine sproeier",
+      "description": "Start de kleine sproeier voor een aantal minuten.",
+      "fields": {"minutes": {"name": "Minuten", "description": "Looptijd in minuten."}}
+    },
+    "manual_short": {"name": "Handmatig kort sproeien", "description": "Korte sproeibeurt (grote 5 min, kleine 1,5 min)."},
+    "manual_normal": {"name": "Handmatig normaal sproeien", "description": "Normale sproeibeurt (grote 12 min, kleine 3 min)."},
+    "stop_all": {"name": "Stop alle sproeiers", "description": "Zet beide sproeiers uit en annuleert een lopende beurt."},
+    "test_scenario": {
+      "name": "Testscenario uitvoeren",
+      "description": "Berekent een dagplan voor een gesimuleerd weerscenario in testmodus (er wordt niet echt gesproeid).",
+      "fields": {"scenario": {"name": "Scenario", "description": "Het te simuleren weerscenario."}}
+    }
   }
 }

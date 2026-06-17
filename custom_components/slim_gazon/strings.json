@@ -66,5 +66,48 @@
         }
       }
     }
+  },
+  "services": {
+    "calculate_plan": {
+      "name": "Calculate plan",
+      "description": "Calculate a new day plan based on the weather and settings. Optional test fields override the real measurements without watering.",
+      "fields": {
+        "test_fase": {"name": "Test phase", "description": "Override the grass phase."},
+        "test_temp_max": {"name": "Test max temperature", "description": "Override today's maximum temperature."},
+        "test_regen_vandaag": {"name": "Test expected rain today", "description": "Override the rain expected today."},
+        "test_regen_24u": {"name": "Test rain last 24h", "description": "Override the rain of the last 24 hours."},
+        "test_wind": {"name": "Test wind", "description": "Override the maximum wind speed."},
+        "test_automatisering_aan": {"name": "Test automation on", "description": "Override the master switch."}
+      }
+    },
+    "run_cycle": {
+      "name": "Run watering cycle",
+      "description": "Run a watering cycle with all safety checks.",
+      "fields": {
+        "big_minutes": {"name": "Big sprinkler minutes", "description": "Run time for the big sprinkler."},
+        "small_minutes": {"name": "Small sprinkler minutes", "description": "Run time for the small sprinkler."},
+        "reason": {"name": "Reason", "description": "Free text logged with the cycle."},
+        "slot": {"name": "Label", "description": "Label shown in notifications and logs."},
+        "force_test": {"name": "Force test mode", "description": "Treat this run as a dry-run."}
+      }
+    },
+    "start_big": {
+      "name": "Start big sprinkler",
+      "description": "Start the big sprinkler for a number of minutes.",
+      "fields": {"minutes": {"name": "Minutes", "description": "Run time in minutes."}}
+    },
+    "start_small": {
+      "name": "Start small sprinkler",
+      "description": "Start the small sprinkler for a number of minutes.",
+      "fields": {"minutes": {"name": "Minutes", "description": "Run time in minutes."}}
+    },
+    "manual_short": {"name": "Manual short watering", "description": "Short cycle (big 5 min, small 1.5 min)."},
+    "manual_normal": {"name": "Manual normal watering", "description": "Normal cycle (big 12 min, small 3 min)."},
+    "stop_all": {"name": "Stop all sprinklers", "description": "Turn off both sprinklers and cancel a running cycle."},
+    "test_scenario": {
+      "name": "Run test scenario",
+      "description": "Calculate a day plan for a simulated weather scenario in test mode (no real watering).",
+      "fields": {"scenario": {"name": "Scenario", "description": "The weather scenario to simulate."}}
+    }
   }
 }

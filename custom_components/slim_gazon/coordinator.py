@@ -11,7 +11,7 @@ import asyncio
 import logging
 from collections.abc import Callable
 from dataclasses import asdict
-from datetime import datetime, time as dt_time
+from datetime import datetime
 
 from homeassistant.components import persistent_notification
 from homeassistant.config_entries import ConfigEntry
@@ -53,7 +53,6 @@ from .const import (
     NUMBER_DEFAULTS,
     PHASE_MANUAL,
     SIGNAL_UPDATE,
-    SLOT_COUNT,
     STORE_VERSION,
 )
 from .planner import PlanInputs, PlanParams, calculate
@@ -524,7 +523,6 @@ class LawnCoordinator:
             _LOGGER.info("%s afgerond", slot_label)
         except asyncio.CancelledError:
             _LOGGER.info("%s onderbroken", slot_label)
-            await self._switch_off_both()
             raise
         finally:
             await self._switch_off_both()
