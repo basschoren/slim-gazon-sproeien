@@ -57,11 +57,17 @@ from .const import (
     KEY_SOW_DATE,
     KEY_TEST,
     KEY_VALUES,
+    KEY_WB_APPLIED,
+    KEY_WB_CARRY,
+    KEY_WB_DATE,
+    KEY_WB_NEED,
+    KEY_WB_RAIN,
     NOWCAST_ONSET_MMH,
     NUMBER_DEFAULTS,
     PHASE_MANUAL,
     SIGNAL_UPDATE,
     STORE_VERSION,
+    WB_MAX_CARRY,
 )
 from .nowcast import NowcastResult, parse_nowcast
 from .planner import PlanInputs, PlanParams, calculate
@@ -107,6 +113,15 @@ class LawnCoordinator:
         self.plan: dict | None = None
         self.last_executed: str = ""
 
+        # Waterbalans (lopend tekort). wb_carry = tekort dat wb_date in ging,
+        # wb_need/wb_rain = laatst berekende dagbehoefte/regen-aftrek, wb_applied
+        # = vandaag daadwerkelijk gegeven water.
+        self.wb_date: str = ""
+        self.wb_carry: float = 0.0
+        self.wb_need: float = 0.0
+        self.wb_rain: float = 0.0
+        self.wb_applied: float = 0.0
+
         # Vluchtige staat.
         self.busy: bool = False
         self._cycle_task: asyncio.Task | None = None
@@ -151,6 +166,11 @@ class LawnCoordinator:
             self.sow_date = data.get(KEY_SOW_DATE)
             self.plan = data.get(KEY_PLAN)
             self.last_executed = data.get(KEY_LAST_EXECUTED, "")
+            self.wb_date = data.get(KEY_WB_DATE, "")
+            self.wb_carry = float(data.get(KEY_WB_CARRY, 0.0))
+            self.wb_need = float(data.get(KEY_WB_NEED, 0.0))
+            self.wb_rain = float(data.get(KEY_WB_RAIN, 0.0))
+            self.wb_applied = float(data.get(KEY_WB_APPLIED, 0.0))
 
         self._setup_schedules()
         # Veiligheid: zet sproeiers uit zodra Home Assistant gestart is.
@@ -181,6 +201,11 @@ class LawnCoordinator:
                 KEY_SOW_DATE: self.sow_date,
                 KEY_PLAN: self.plan,
                 KEY_LAST_EXECUTED: self.last_executed,
+                KEY_WB_DATE: self.wb_date,
+                KEY_WB_CARRY: self.wb_carry,
+                KEY_WB_NEED: self.wb_need,
+                KEY_WB_RAIN: self.wb_rain,
+                KEY_WB_APPLIED: self.wb_applied,
             }
         )
 
@@ -329,6 +354,15 @@ class LawnCoordinator:
         """Bereken een nieuw dagplan en sla het op."""
         overrides = overrides or {}
         today = dt_util.now().date()
+        today_str = today.isoformat()
+
+        # Een berekening met test-overrides is een preview: die mag de echte
+        # waterbalans niet bijwerken.
+        preview = bool(overrides)
+        if preview:
+            carry_in = float(overrides.get("carry_mm", self.wb_carry))
+        else:
+            carry_in = self._roll_water_balance(today_str)
 
         hourly = await self._async_get_forecast("hourly")
         daily = await self._async_get_forecast("daily")
@@ -417,11 +451,28 @@ class LawnCoordinator:
             bewolkt_of_nat=bewolkt_of_nat,
             bodemvocht=bodemvocht,
             forecast_items_count=forecast_items_count,
+            carry_mm=carry_in,
         )
         params = self._build_params()
         plan = calculate(inputs, params)
 
+        # Werk de waterbalans bij (alleen voor een echte berekening).
+        if not preview:
+            if plan.soil_reset:
+                self.wb_carry = 0.0
+                self.wb_need = 0.0
+                self.wb_rain = 0.0
+                self.wb_applied = 0.0
+            else:
+                self.wb_need = plan.daily_need
+                self.wb_rain = plan.rain_offset
+        water_tekort = self.water_deficit(plan.gross_deficit)
+
         warnings = self._sensor_warnings(overrides)
+        if plan.capped:
+            warnings = "diepe beurt beperkt door max minuten/runtime" + (
+                "" if warnings == "geen" else f", {warnings}"
+            )
 
         plan_dict = asdict(plan)
         plan_dict["calculated_at"] = dt_util.now().isoformat(timespec="seconds")
@@ -438,6 +489,10 @@ class LawnCoordinator:
             "bodemvocht": bodemvocht,
             "bewolkt_of_nat": bewolkt_of_nat,
             "fase": fase,
+            "dagbehoefte_mm": plan.daily_need,
+            "regen_aftrek_mm": plan.rain_offset,
+            "tekort_begin_mm": plan.carry_in,
+            "watertekort_mm": water_tekort,
             "nowcast_vandaag_mm": nowcast_today if nowcast else None,
             "nowcast_voor_middag_mm": nowcast_before_noon if nowcast else None,
             "nowcast_minuten_tot_regen": (
@@ -452,6 +507,8 @@ class LawnCoordinator:
         persistent_notification.async_create(
             self.hass,
             f"Dagplan voor {today}: {plan.summary}\n"
+            f"Dagbehoefte {plan.daily_need} mm, regen-aftrek {plan.rain_offset} mm, "
+            f"watertekort {water_tekort} mm. "
             f"Regen vandaag {regen_vandaag} mm, regen 24u {regen_24u} mm, "
             f"max temp {temp_max} °C, wind max {wind_dag_max} km/h, "
             f"RV {luchtvochtigheid}%, UV {uv_index}, straling {straling} W/m². "
@@ -484,7 +541,43 @@ class LawnCoordinator:
             uv_hoog=v("uv_hoog"),
             straling_hoog=v("straling_hoog_wm2"),
             bodemvocht_nat=v("bodemvocht_nat"),
+            max_runtime=v("max_runtime_minuten"),
         )
+
+    # -- waterbalans -------------------------------------------------------
+    def _roll_water_balance(self, today_str: str) -> float:
+        """Sluit de vorige dag af bij een nieuwe dag en geef het tekort van vandaag.
+
+        Het tekort dat een dag in gaat is wat er aan het eind van de vorige dag
+        nog "open" stond: vorig tekort + behoefte − regen − gegeven water,
+        afgetopt op `WB_MAX_CARRY`.
+        """
+        if self.wb_date != today_str:
+            leftover = self.wb_carry + self.wb_need - self.wb_rain - self.wb_applied
+            self.wb_carry = round(max(0.0, min(leftover, WB_MAX_CARRY)), 1)
+            self.wb_date = today_str
+            self.wb_need = 0.0
+            self.wb_rain = 0.0
+            self.wb_applied = 0.0
+        return self.wb_carry
+
+    def water_deficit(self, gross: float | None = None) -> float:
+        """Actueel watertekort (mm): de dagbehoefte minus het al gegeven water."""
+        if gross is None:
+            gross = float((self.plan or {}).get("gross_deficit", 0.0) or 0.0)
+        return round(max(0.0, gross - self.wb_applied), 1)
+
+    async def _credit_applied(self, big_minutes: float, small_minutes: float) -> None:
+        """Boek daadwerkelijk gegeven water af van het tekort."""
+        applied = max(
+            big_minutes * self.get_value("grote_rate"),
+            small_minutes * self.get_value("kleine_rate"),
+        )
+        if applied <= 0:
+            return
+        self.wb_applied = round(self.wb_applied + applied, 2)
+        await self.async_save()
+        self._notify_listeners()
 
     def _sensor_warnings(self, overrides: dict) -> str:
         meldingen: list[str] = []
@@ -576,6 +669,7 @@ class LawnCoordinator:
                 await self._run_switch(self.small_switch, small_s)
 
             await self._switch_off_both()
+            await self._credit_applied(big_minutes, small_minutes)
             persistent_notification.async_create(
                 self.hass,
                 f"{slot_label} afgerond; beide sproeiers zijn uitgezet.",
@@ -774,8 +868,10 @@ class LawnCoordinator:
             return "pas_ingezaaid"
         if age <= 21:
             return "kiemend"
-        if age <= 70:
+        if age <= 49:
             return "jong_gras"
+        if age <= 70:
+            return "rond_eerste_maaibeurt"
         return "bestaand_gras"
 
     def next_run(self) -> str:

@@ -118,6 +118,14 @@ SENSORS: tuple[LawnSensorDescription, ...] = (
         value_fn=lambda c: _plan(c, "netto_mm"),
     ),
     LawnSensorDescription(
+        key="water_deficit",
+        name="Watertekort",
+        icon="mdi:water-minus",
+        native_unit_of_measurement="mm",
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda c: c.water_deficit(),
+    ),
+    LawnSensorDescription(
         key="big_minutes_total",
         name="Geplande grote sproeier minuten",
         icon="mdi:sprinkler-variant",

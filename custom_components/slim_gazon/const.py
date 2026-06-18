@@ -60,9 +60,90 @@ NOWCAST_ONSET_MMH = 0.1
 PHASE_NEW = "pas_ingezaaid"
 PHASE_GERM = "kiemend"
 PHASE_YOUNG = "jong_gras"
+PHASE_PREMOW = "rond_eerste_maaibeurt"
 PHASE_ESTABLISHED = "bestaand_gras"
 PHASE_MANUAL = "alleen_handmatig"
-PHASES = [PHASE_NEW, PHASE_GERM, PHASE_YOUNG, PHASE_ESTABLISHED, PHASE_MANUAL]
+PHASES = [
+    PHASE_NEW,
+    PHASE_GERM,
+    PHASE_YOUNG,
+    PHASE_PREMOW,
+    PHASE_ESTABLISHED,
+    PHASE_MANUAL,
+]
+
+# -- Sproeiadvies (zonnige dag) ----------------------------------------------
+# Bron: `sproeiadvies_gazon_temperatuurklassen.xlsx` (blad "Advies"). Het is een
+# 2D-tabel temperatuurklasse (10..40 °C) × grasstadium voor een zonnige zuidtuin
+# zonder regen. Per cel: de gemiddelde dagbehoefte (mm/dag), de adviesdiepte per
+# beurt (mm), of het advies "per week" is (diep & weinig) en de aanbevolen
+# momenten. De planner gebruikt dit als basis en past het aan met de sensoren
+# (zon/bewolking, luchtvochtigheid, wind, regen, bodemvocht) via een lopende
+# waterbalans.
+ADVICE_TEMPS: tuple[int, ...] = (10, 15, 20, 25, 30, 35, 40)
+
+
+@dataclass(frozen=True, kw_only=True)
+class AdviceCell:
+    """Eén advies-cel uit de tabel (temperatuurklasse × stadium)."""
+
+    daily_need: float  # gemiddelde behoefte mm/dag op een zonnige dag
+    depth: float  # adviesdiepte per beurt (mm)
+    per_week: bool  # True = diep & weinig (per week), False = (meerdere) per dag
+    times: tuple[str, ...]  # aanbevolen momenten ("HH:MM")
+
+
+# Per-week stadia krijgen één diepe ochtendbeurt; de frequentie volgt vanzelf
+# uit de waterbalans (hoe snel het tekort de adviesdiepte bereikt).
+_MORNING: tuple[str, ...] = ("06:00",)
+
+ADVICE: dict[str, dict[int, AdviceCell]] = {
+    PHASE_NEW: {
+        10: AdviceCell(daily_need=2.0, depth=1.0, per_week=False, times=("08:00", "14:00")),
+        15: AdviceCell(daily_need=2.4, depth=1.2, per_week=False, times=("07:00", "14:00")),
+        20: AdviceCell(daily_need=3.9, depth=1.3, per_week=False, times=("06:30", "12:00", "16:00")),
+        25: AdviceCell(daily_need=6.0, depth=1.5, per_week=False, times=("06:00", "11:00", "15:00", "18:00")),
+        30: AdviceCell(daily_need=8.5, depth=1.7, per_week=False, times=("06:00", "09:30", "12:30", "15:30", "18:00")),
+        35: AdviceCell(daily_need=10.8, depth=1.8, per_week=False, times=("06:00", "09:00", "11:30", "14:00", "16:30", "18:30")),
+        40: AdviceCell(daily_need=14.0, depth=2.0, per_week=False, times=("06:00", "08:30", "11:00", "13:30", "16:00", "18:00", "20:00")),
+    },
+    PHASE_GERM: {
+        10: AdviceCell(daily_need=1.5, depth=1.5, per_week=False, times=("08:00",)),
+        15: AdviceCell(daily_need=4.0, depth=2.0, per_week=False, times=("07:00", "15:00")),
+        20: AdviceCell(daily_need=4.4, depth=2.2, per_week=False, times=("06:30", "15:30")),
+        25: AdviceCell(daily_need=5.0, depth=2.5, per_week=False, times=("06:00", "16:00")),
+        30: AdviceCell(daily_need=7.5, depth=2.5, per_week=False, times=("06:00", "12:30", "17:00")),
+        35: AdviceCell(daily_need=12.0, depth=3.0, per_week=False, times=("06:00", "11:00", "15:00", "18:30")),
+        40: AdviceCell(daily_need=12.0, depth=3.0, per_week=False, times=("06:00", "10:30", "15:00", "19:00")),
+    },
+    PHASE_YOUNG: {
+        10: AdviceCell(daily_need=1.71, depth=4.0, per_week=True, times=_MORNING),
+        15: AdviceCell(daily_need=2.57, depth=4.5, per_week=True, times=_MORNING),
+        20: AdviceCell(daily_need=4.5, depth=4.5, per_week=False, times=("06:30",)),
+        25: AdviceCell(daily_need=5.0, depth=5.0, per_week=False, times=("06:00",)),
+        30: AdviceCell(daily_need=6.0, depth=6.0, per_week=False, times=("06:00",)),
+        35: AdviceCell(daily_need=11.0, depth=5.5, per_week=False, times=("06:00", "18:00")),
+        40: AdviceCell(daily_need=10.0, depth=5.0, per_week=False, times=("06:00", "18:30")),
+    },
+    PHASE_PREMOW: {
+        10: AdviceCell(daily_need=2.29, depth=8.0, per_week=True, times=_MORNING),
+        15: AdviceCell(daily_need=2.57, depth=9.0, per_week=True, times=_MORNING),
+        20: AdviceCell(daily_need=3.86, depth=9.0, per_week=True, times=_MORNING),
+        25: AdviceCell(daily_need=4.29, depth=10.0, per_week=True, times=_MORNING),
+        30: AdviceCell(daily_need=4.71, depth=11.0, per_week=True, times=_MORNING),
+        35: AdviceCell(daily_need=6.29, depth=11.0, per_week=True, times=_MORNING),
+        40: AdviceCell(daily_need=6.86, depth=12.0, per_week=True, times=_MORNING),
+    },
+    PHASE_ESTABLISHED: {
+        10: AdviceCell(daily_need=1.43, depth=10.0, per_week=True, times=_MORNING),
+        15: AdviceCell(daily_need=1.71, depth=12.0, per_week=True, times=_MORNING),
+        20: AdviceCell(daily_need=2.86, depth=10.0, per_week=True, times=_MORNING),
+        25: AdviceCell(daily_need=3.43, depth=12.0, per_week=True, times=_MORNING),
+        30: AdviceCell(daily_need=4.71, depth=11.0, per_week=True, times=_MORNING),
+        35: AdviceCell(daily_need=5.14, depth=12.0, per_week=True, times=_MORNING),
+        40: AdviceCell(daily_need=7.14, depth=12.5, per_week=True, times=_MORNING),
+    },
+}
 
 # -- Opslagsleutels (Store) --------------------------------------------------
 STORE_VERSION = 1
@@ -73,6 +154,16 @@ KEY_TEST = "test_mode"
 KEY_SOW_DATE = "sow_date"
 KEY_PLAN = "plan"
 KEY_LAST_EXECUTED = "last_executed_slot"
+# Waterbalans (lopend tekort) — kern van het slimme advies.
+KEY_WB_DATE = "wb_date"  # datum waarvoor de balans-velden gelden
+KEY_WB_CARRY = "wb_carry"  # tekort dat deze dag in ging (mm)
+KEY_WB_NEED = "wb_need"  # laatst berekende dagbehoefte (mm)
+KEY_WB_RAIN = "wb_rain"  # laatst berekende regen-aftrek (mm)
+KEY_WB_APPLIED = "wb_applied"  # vandaag daadwerkelijk gegeven water (mm)
+
+# Maximaal opgebouwd tekort (mm). Voorkomt dat een lange test/uit-periode een
+# enorme inhaalslag oplevert zodra er weer gesproeid mag worden.
+WB_MAX_CARRY = 30.0
 
 DEFAULT_PHASE = PHASE_NEW
 DEFAULT_MASTER = True
@@ -122,7 +213,7 @@ NUMBER_PARAMS: tuple[NumberParam, ...] = (
     NumberParam(
         key="kleine_rate",
         name="Kleine sproeier mm per minuut",
-        default=0.667,
+        default=0.5,
         min=0.01,
         max=5.0,
         step=0.001,
@@ -132,9 +223,9 @@ NUMBER_PARAMS: tuple[NumberParam, ...] = (
     NumberParam(
         key="max_minuten_per_beurt",
         name="Max minuten per beurt",
-        default=25.0,
+        default=95.0,
         min=1.0,
-        max=60.0,
+        max=120.0,
         step=0.5,
         unit="min",
         icon="mdi:timer-alert-outline",
@@ -301,9 +392,9 @@ NUMBER_PARAMS: tuple[NumberParam, ...] = (
     NumberParam(
         key="max_runtime_minuten",
         name="Veiligheid max runtime",
-        default=30.0,
+        default=100.0,
         min=5.0,
-        max=90.0,
+        max=180.0,
         step=1.0,
         unit="min",
         icon="mdi:timer-alert",

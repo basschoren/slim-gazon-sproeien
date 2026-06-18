@@ -1,23 +1,39 @@
-"""Berekening van het slimme dagplan.
+"""Berekening van het slimme dagplan (waterbalans).
 
-Dit is een getrouwe vertaling van de Jinja-logica uit het oorspronkelijke
-`slim_gazon_sproeien.yaml` package naar pure Python, zodat het gedrag identiek
-is maar makkelijk te onderhouden en te testen.
+De basis is het sproeiadvies uit `sproeiadvies_gazon_temperatuurklassen.xlsx`
+(zie `ADVICE` in const.py): voor een **zonnige dag** geeft de tabel per
+temperatuurklasse en grasstadium de dagbehoefte (mm/dag) en de adviesdiepte per
+beurt. Sommige stadia zijn "per week" (diep & weinig), andere "per dag".
+
+Bovenop die basis ligt een **slim, adaptief algoritme**:
+
+* een **weerfactor** schaalt de zonnige-dag-behoefte naar de werkelijke dag op
+  basis van bewolking/zon, luchtvochtigheid en wind;
+* een **lopende waterbalans** (tekort) telt elke dag de behoefte op en trekt de
+  gevallen/verwachte regen af. Pas wanneer het tekort de adviesdiepte bereikt,
+  wordt er gesproeid. Zo ontstaat vanzelf de juiste frequentie: bij zaad meerdere
+  beurten per dag, bij volgroeid gras een diepe beurt ~2× per week.
+
+De waterbalans-staat (het tekort dat tussen dagen wordt meegenomen, en het al
+gegeven water van vandaag) leeft in de coördinator; deze module is een pure
+functie: gegeven het tekort van vandaag en de meetwaarden, geeft het het plan.
 """
 
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+
 from decimal import ROUND_HALF_UP, Decimal
 
 from .const import (
-    PHASE_ESTABLISHED,
+    ADVICE,
+    ADVICE_TEMPS,
     PHASE_GERM,
     PHASE_MANUAL,
     PHASE_NEW,
-    PHASE_YOUNG,
     SLOT_COUNT,
+    AdviceCell,
 )
 
 
@@ -44,11 +60,13 @@ class PlanInputs:
     bewolkt_of_nat: bool
     bodemvocht: float = -1.0
     forecast_items_count: int = 0
+    # Lopend watertekort (mm) dat vandaag in ging — kern van de waterbalans.
+    carry_mm: float = 0.0
 
 
 @dataclass(slots=True)
 class PlanParams:
-    """Instelbare parameters (de input_number waarden)."""
+    """Instelbare parameters (de number-entiteiten)."""
 
     factor: float
     grote_rate: float
@@ -68,6 +86,7 @@ class PlanParams:
     uv_hoog: float
     straling_hoog: float
     bodemvocht_nat: float
+    max_runtime: float
 
 
 @dataclass(slots=True)
@@ -88,9 +107,10 @@ class Plan:
     """Het volledige berekende dagplan."""
 
     temp_range: str
-    base_total_mm: float
-    bruto_mm: float
-    regen_reductie: float
+    daily_need: float
+    rain_offset: float
+    carry_in: float
+    gross_deficit: float
     netto_mm: float
     aantal_beurten: int
     mm_per_beurt: float
@@ -100,6 +120,8 @@ class Plan:
     big_minutes_total: float
     small_minutes_total: float
     hard_stop_reason: str | None
+    soil_reset: bool
+    capped: bool
     reason: str
     summary: str
     slots: list[Slot] = field(default_factory=list)
@@ -123,125 +145,94 @@ def _temp_range(t: float) -> str:
     return "40_plus"
 
 
-def _base_total_mm(t: float) -> float:
-    if t < 10:
-        return 0.5
-    if t < 15:
-        return 1.5
-    if t < 20:
-        return 3.0
-    if t < 25:
-        return 4.5
-    if t < 30:
-        return 6.0
-    if t < 35:
-        return 8.5
-    if t < 40:
-        return 12.0
-    return 14.0
+def _nearest_class(temp: float) -> int:
+    """De dichtstbijzijnde temperatuurklasse uit de advies-tabel."""
+    if temp <= ADVICE_TEMPS[0]:
+        return ADVICE_TEMPS[0]
+    if temp >= ADVICE_TEMPS[-1]:
+        return ADVICE_TEMPS[-1]
+    return min(ADVICE_TEMPS, key=lambda c: (abs(c - temp), c))
 
 
-def _base_beurten(t: float) -> int:
-    if t < 10:
-        return 1
-    if t < 15:
-        return 2
-    if t < 20:
-        return 2
-    if t < 25:
-        return 3
-    if t < 30:
-        return 4
-    if t < 35:
-        return 5
-    if t < 40:
-        return 6
-    return 7
+def _cell(fase: str, temp: float) -> AdviceCell | None:
+    """De advies-cel voor deze fase en temperatuur (None = niet sproeien)."""
+    table = ADVICE.get(fase)
+    if not table:
+        return None
+    return table.get(_nearest_class(temp))
 
 
-def _phase_factor(fase: str) -> float:
-    return {
-        PHASE_NEW: 1.0,
-        PHASE_GERM: 0.85,
-        PHASE_YOUNG: 0.70,
-        PHASE_ESTABLISHED: 1.0,
-    }.get(fase, 0.0)
+def _cold_factor(temp: float) -> float:
+    """Onder 10 °C verdampt er nauwelijks; schaal de behoefte lineair af naar 0."""
+    if temp >= 10:
+        return 1.0
+    return max(0.0, min(1.0, (temp - 5) / 5))
 
 
-def _slot_times(fase: str, temp_range: str) -> list[str]:
-    """Bepaal de 8 sproeitijden op basis van fase en temperatuurklasse."""
-    young_or_est = fase in (PHASE_YOUNG, PHASE_ESTABLISHED)
+def _weather_factor(inputs: PlanInputs, params: PlanParams) -> float:
+    """Schaal de zonnige-dag-behoefte naar de werkelijke dag.
 
-    if young_or_est:
-        slot1 = "06:30:00"
-    elif temp_range == "onder_10":
-        slot1 = "09:00:00"
-    elif temp_range in ("10_14", "15_19"):
-        slot1 = "06:00:00"
-    else:
-        slot1 = "05:00:00"
+    De tabel gaat uit van volle zon, dus de factor blijft vooral ≤ 1: bewolkt/nat
+    of vochtig weer verlaagt de behoefte; droge hitte en wind verhogen 'm iets.
+    """
+    wf = 1.0
+    if inputs.luchtvochtigheid <= params.rv_laag and inputs.temp_max >= params.temp_warm:
+        wf += 0.10
+    elif inputs.luchtvochtigheid >= params.rv_hoog:
+        wf -= 0.10
+    if inputs.bewolkt_of_nat:
+        wf -= 0.20
+    elif inputs.uv_index >= params.uv_hoog or inputs.straling >= params.straling_hoog:
+        wf += 0.05
+    if params.wind_minderen <= inputs.wind_dag_max < params.wind_stop:
+        wf += 0.05
+    return _round(max(0.55, min(wf, 1.15)), 2)
 
-    if young_or_est:
-        slot2 = "18:30:00"
-    elif temp_range == "10_14":
-        slot2 = "16:30:00"
-    elif temp_range == "15_19":
-        slot2 = "18:00:00"
-    elif temp_range == "20_24":
-        slot2 = "13:00:00"
-    elif temp_range == "25_29":
-        slot2 = "10:00:00"
-    elif temp_range == "30_34":
-        slot2 = "09:30:00"
-    elif temp_range == "35_39":
-        slot2 = "08:30:00"
-    else:
-        slot2 = "08:00:00"
 
-    if temp_range == "20_24":
-        slot3 = "18:30:00"
-    elif temp_range == "25_29":
-        slot3 = "14:00:00"
-    elif temp_range == "30_34":
-        slot3 = "12:30:00"
-    elif temp_range == "35_39":
-        slot3 = "11:30:00"
-    else:
-        slot3 = "10:30:00"
+def _rain_offset(regen_vandaag: float, regen_middag: float, toplaag: bool) -> float:
+    """Hoeveel mm behoefte de regen van vandaag wegneemt.
 
-    if temp_range == "25_29":
-        slot4 = "18:30:00"
-    elif temp_range == "30_34":
-        slot4 = "15:30:00"
-    elif temp_range == "35_39":
-        slot4 = "14:30:00"
-    else:
-        slot4 = "13:00:00"
+    Regen vóór de middag telt volledig; regen ná de middag telt voor zaad/kiemend
+    minder mee, want de toplaag moet 's ochtends al vochtig zijn (de middagbui
+    komt te laat om de ochtendbeurt te vervangen).
+    """
+    voor = min(regen_middag, regen_vandaag)
+    na = max(0.0, regen_vandaag - voor)
+    gewicht_na = 0.4 if toplaag else 0.9
+    return _round(max(0.0, voor + na * gewicht_na), 1)
 
-    if temp_range == "30_34":
-        slot5 = "18:30:00"
-    elif temp_range == "35_39":
-        slot5 = "17:00:00"
-    else:
-        slot5 = "15:30:00"
 
-    slot6 = "19:30:00" if temp_range == "35_39" else "17:30:00"
-    slot7 = "20:00:00"
-    slot8 = "21:30:00"
+def _hhmm_to_min(value: str) -> int:
+    hour, minute = value.split(":")[:2]
+    return int(hour) * 60 + int(minute)
 
-    return [slot1, slot2, slot3, slot4, slot5, slot6, slot7, slot8]
+
+def _min_to_time(total: int) -> str:
+    total = max(0, min(total, 21 * 60 + 30))
+    return f"{total // 60:02d}:{total % 60:02d}:00"
+
+
+def _slot_time(times: tuple[str, ...], index: int, step: int = 90) -> str:
+    """Tijd van beurt `index`. Stabiel per index, ook bij wisselend aantal.
+
+    Tot het aantal aanbevolen momenten gebruiken we die exact; daarboven (een
+    diepe beurt die gesplitst wordt om de veiligheidslimiet te respecteren)
+    spreiden we extra beurten met vaste stappen over de ochtend.
+    """
+    if index < len(times):
+        return f"{times[index]}:00"
+    extra = index - len(times) + 1
+    return _min_to_time(_hhmm_to_min(times[-1]) + extra * step)
 
 
 def calculate(inputs: PlanInputs, params: PlanParams) -> Plan:
-    """Bereken het dagplan."""
+    """Bereken het dagplan op basis van de waterbalans."""
     fase = inputs.fase
     temp_max = inputs.temp_max
+    carry = max(0.0, _round(inputs.carry_mm, 1))
     toplaag = fase in (PHASE_NEW, PHASE_GERM)
-
     temp_range = _temp_range(temp_max)
-    base_total_mm = _base_total_mm(temp_max)
-    base_beurten = _base_beurten(temp_max)
-    phase_factor = _phase_factor(fase)
+    cell = _cell(fase, temp_max)
 
     # Effectieve regen: alles onder de negeer-drempel telt als 0.
     drempel = params.regen_negeren_onder
@@ -249,170 +240,140 @@ def calculate(inputs: PlanInputs, params: PlanParams) -> Plan:
     regen_24u_eff = 0.0 if inputs.regen_24u < drempel else _round(inputs.regen_24u, 1)
     regen_middag_eff = 0.0 if inputs.regen_vandaag < drempel else _round(inputs.regen_middag, 1)
 
-    # Weer-factor.
-    wf = 1.0
-    if inputs.luchtvochtigheid <= params.rv_laag and temp_max >= params.temp_warm:
-        wf += 0.10
-    elif inputs.luchtvochtigheid >= params.rv_hoog:
-        wf -= 0.10
-    if inputs.uv_index >= params.uv_hoog or inputs.straling >= params.straling_hoog:
-        wf += 0.10
-    elif inputs.bewolkt_of_nat:
-        wf -= 0.10
-    if params.wind_minderen <= inputs.wind_dag_max < params.wind_stop:
-        wf += 0.05
-    weather_factor = _round(max(0.5, min(wf, 1.35)), 2)
+    weather_factor = _weather_factor(inputs, params)
+    cold = _cold_factor(temp_max)
 
-    # Basis-mm voor deze fase.
-    if fase == PHASE_ESTABLISHED:
-        if (regen_24u_eff + regen_vandaag_eff) >= params.regen_vandaag_skip:
-            basis_mm_fase = 0.0
-        elif temp_max >= params.temp_extreem_heet:
-            basis_mm_fase = 15.0
-        elif temp_max >= params.temp_heet:
-            basis_mm_fase = 12.0
-        elif temp_max >= params.temp_warm:
-            basis_mm_fase = 10.0
-        else:
-            basis_mm_fase = 0.0
+    if cell is not None:
+        daily_need = _round(cell.daily_need * weather_factor * params.factor * cold, 2)
     else:
-        basis_mm_fase = _round(base_total_mm * phase_factor * weather_factor * params.factor, 1)
-
-    # Regenreductie.
-    past_weight = 0.45 if toplaag else 0.85
-    if inputs.forecast_items_count > 0:
-        na_middag = max(0.0, regen_vandaag_eff - regen_middag_eff)
-        expected = regen_middag_eff * 0.80 + na_middag * (0.30 if toplaag else 0.75)
-    else:
-        expected = regen_vandaag_eff * (0.40 if toplaag else 0.75)
-    raw_reductie = regen_24u_eff * past_weight + expected
-    max_reductie = basis_mm_fase * (0.75 if toplaag and temp_max >= params.temp_warm else 1.0)
-    regen_reductie = _round(max(0.0, min(raw_reductie, max_reductie)), 1)
+        daily_need = 0.0
+    rain_offset = _rain_offset(regen_vandaag_eff, regen_middag_eff, toplaag)
 
     # Harde stop-redenen.
-    hard_stop: str | None
-    if fase == PHASE_MANUAL:
-        hard_stop = "fase staat op Alleen handmatig / uit"
+    soil_reset = False
+    if fase == PHASE_MANUAL or cell is None:
+        hard_stop: str | None = "fase staat op Alleen handmatig / uit"
     elif not inputs.automatisering_aan:
         hard_stop = "master staat uit"
     elif inputs.wind_dag_max >= params.wind_stop:
         hard_stop = f"wind te hard: {inputs.wind_dag_max} km/h"
-    elif inputs.bodemvocht >= params.bodemvocht_nat and inputs.bodemvocht >= 0:
+    elif inputs.bodemvocht >= 0 and inputs.bodemvocht >= params.bodemvocht_nat:
         hard_stop = f"bodemvocht is hoog: {inputs.bodemvocht}%"
-    elif fase in (PHASE_YOUNG, PHASE_ESTABLISHED) and regen_24u_eff >= params.regen_24u_skip:
+        soil_reset = True
+    elif regen_24u_eff >= params.regen_24u_skip:
         hard_stop = f"genoeg regen laatste 24u: {regen_24u_eff} mm"
-    elif fase == PHASE_ESTABLISHED and regen_vandaag_eff >= params.regen_vandaag_skip:
+    elif regen_vandaag_eff >= params.regen_vandaag_skip:
         hard_stop = f"genoeg regen verwacht: {regen_vandaag_eff} mm"
     else:
         hard_stop = None
 
-    bruto_mm = _round(basis_mm_fase, 1)
-    netto_mm_raw = _round(basis_mm_fase - regen_reductie, 1)
-    netto_mm = 0.0 if hard_stop is not None else _round(max(0.0, netto_mm_raw), 1)
-
-    # Limieten per fase.
-    if fase == PHASE_NEW:
-        max_groot = 25.0
-        max_klein = 5.0
-    elif fase == PHASE_GERM:
-        max_groot = 28.0
-        max_klein = 6.0
-    elif fase == PHASE_YOUNG:
-        max_groot = 35.0
-        max_klein = 7.0
+    # Het lopende tekort. Bij master uit / alleen-handmatig bevriezen we het
+    # tekort (geen opbouw). Bij natte bodem is de grond de waarheid → reset.
+    frozen = fase == PHASE_MANUAL or cell is None or not inputs.automatisering_aan
+    if frozen:
+        gross_deficit = _round(carry, 1)
+    elif soil_reset:
+        gross_deficit = 0.0
     else:
-        max_groot = params.max_minuten
-        max_klein = 10.0
+        gross_deficit = _round(max(0.0, carry + daily_need - rain_offset), 1)
 
-    # Basis-aantal beurten per fase.
-    if fase == PHASE_NEW:
-        basis_beurten_fase = base_beurten
-    elif fase == PHASE_GERM:
-        basis_beurten_fase = max(1, base_beurten - (1 if base_beurten >= 4 else 0))
-    elif fase == PHASE_YOUNG:
-        basis_beurten_fase = max(1, min(3, base_beurten - 2))
-    elif fase == PHASE_ESTABLISHED:
-        basis_beurten_fase = 2 if netto_mm >= 12 else 1 if netto_mm >= 8 else 0
-    else:
-        basis_beurten_fase = 0
+    # Beurten bepalen (alleen als er geen harde stop is en het tekort de
+    # adviesdiepte haalt).
+    beats = 0
+    mm_per_beat = 0.0
+    capped = False
+    if hard_stop is None and cell is not None and gross_deficit >= cell.depth:
+        depth = cell.depth
+        n_base = len(cell.times)
+        target = min(gross_deficit, depth * n_base)
+        # Max mm per beurt door de veiligheids-/looptijdlimiet (grote sproeier is
+        # het traagst en dus bepalend).
+        max_mm = max(
+            params.min_mm_per_beurt,
+            min(params.max_minuten, params.max_runtime) * params.grote_rate,
+        )
+        beats = max(1, min(n_base, math.ceil(target / depth)))
+        if target / beats > max_mm:
+            beats = math.ceil(target / max_mm)
+        beats = min(beats, SLOT_COUNT)
+        mm_per_beat = target / beats
+        if mm_per_beat > max_mm:
+            mm_per_beat = max_mm
+            capped = True
+        mm_per_beat = _round(mm_per_beat, 2)
+        if mm_per_beat < params.min_mm_per_beurt:
+            beats = 0
+            mm_per_beat = 0.0
 
-    max_mm_per_slot = _round(min(max_groot * params.grote_rate, max_klein * params.kleine_rate), 2)
+    big_minutes = 0.0
+    small_minutes = 0.0
+    if beats > 0:
+        if params.grote_rate > 0:
+            big_minutes = _round(
+                min(params.max_runtime, _round(mm_per_beat / params.grote_rate * 2, 0) / 2), 1
+            )
+        if params.kleine_rate > 0:
+            small_minutes = _round(
+                min(params.max_runtime, _round(mm_per_beat / params.kleine_rate * 2, 0) / 2), 1
+            )
 
-    if netto_mm <= 0 or max_mm_per_slot <= 0:
-        benodigde_door_max = 0
-    else:
-        benodigde_door_max = math.ceil(netto_mm / max_mm_per_slot)
-
-    if netto_mm < params.min_mm_per_beurt:
-        aantal_beurten = 0
-    else:
-        aantal_beurten = min(SLOT_COUNT, max(basis_beurten_fase, benodigde_door_max))
-
-    if aantal_beurten > 0:
-        mm_per_beurt = _round(min(netto_mm / aantal_beurten, max_mm_per_slot), 2)
-    else:
-        mm_per_beurt = 0.0
-
-    total_mm = _round(mm_per_beurt * aantal_beurten, 1)
-
-    if aantal_beurten > 0 and params.grote_rate > 0:
-        minutes = mm_per_beurt / params.grote_rate
-        big_minutes = _round(max(0.0, min(max_groot, _round(minutes * 2, 0) / 2)), 1)
-    else:
-        big_minutes = 0.0
-
-    if aantal_beurten > 0 and params.kleine_rate > 0:
-        minutes = mm_per_beurt / params.kleine_rate
-        small_minutes = _round(max(0.0, min(max_klein, _round(minutes * 2, 0) / 2)), 1)
-    else:
-        small_minutes = 0.0
+    total_mm = _round(mm_per_beat * beats, 1)
 
     # Reden-tekst.
     if hard_stop is not None:
         reason = f"overgeslagen: {hard_stop}"
-    elif netto_mm < params.min_mm_per_beurt:
-        reason = f"overgeslagen: netto behoefte {netto_mm} mm is te laag"
+    elif beats == 0:
+        depth_txt = cell.depth if cell is not None else 0
+        reason = (
+            f"vandaag niet sproeien: watertekort {gross_deficit} mm haalt de "
+            f"adviesdiepte {depth_txt} mm nog niet"
+        )
     else:
         reason = (
-            f"{fase}; {temp_range}; basis {base_total_mm} mm; fase/weer {bruto_mm} mm; "
-            f"regen reductie {regen_reductie} mm; gepland {total_mm} mm"
+            f"{fase}; {temp_range}; dagbehoefte {daily_need} mm; weerfactor "
+            f"{weather_factor}; tekort {gross_deficit} mm; {beats}× {mm_per_beat} mm "
+            f"gepland ({total_mm} mm)"
         )
+    if capped:
+        reason += " (beperkt door max minuten/runtime — verhoog die voor diepere beurten)"
 
-    times = _slot_times(fase, temp_range)
     slots: list[Slot] = []
-    for i in range(1, SLOT_COUNT + 1):
-        active = i <= aantal_beurten
-        slots.append(
-            Slot(
-                index=i,
-                time=times[i - 1],
-                mm=mm_per_beurt if active else 0.0,
-                big_minutes=big_minutes if active else 0.0,
-                small_minutes=small_minutes if active else 0.0,
-                active=active,
-                reason=reason[:100] if active else "",
+    if cell is not None:
+        for i in range(beats):
+            slots.append(
+                Slot(
+                    index=i + 1,
+                    time=_slot_time(cell.times, i),
+                    mm=mm_per_beat,
+                    big_minutes=big_minutes,
+                    small_minutes=small_minutes,
+                    active=True,
+                    reason=reason[:100],
+                )
             )
-        )
 
     summary = (
-        f"{aantal_beurten}x; {mm_per_beurt} mm/beurt; totaal {total_mm} mm; "
+        f"{beats}× {mm_per_beat} mm/beurt; totaal {total_mm} mm; "
         f"groot {big_minutes}m, klein {small_minutes}m. {reason}."
     )[:255]
 
     return Plan(
         temp_range=temp_range,
-        base_total_mm=base_total_mm,
-        bruto_mm=bruto_mm,
-        regen_reductie=regen_reductie,
-        netto_mm=netto_mm,
-        aantal_beurten=aantal_beurten,
-        mm_per_beurt=mm_per_beurt,
+        daily_need=daily_need,
+        rain_offset=rain_offset,
+        carry_in=carry,
+        gross_deficit=gross_deficit,
+        netto_mm=gross_deficit,
+        aantal_beurten=beats,
+        mm_per_beurt=mm_per_beat,
         big_minutes_per_beat=big_minutes,
         small_minutes_per_beat=small_minutes,
         total_mm=total_mm,
-        big_minutes_total=_round(big_minutes * aantal_beurten, 1),
-        small_minutes_total=_round(small_minutes * aantal_beurten, 1),
+        big_minutes_total=_round(big_minutes * beats, 1),
+        small_minutes_total=_round(small_minutes * beats, 1),
         hard_stop_reason=hard_stop,
+        soil_reset=soil_reset,
+        capped=capped,
         reason=reason,
         summary=summary,
         slots=slots,

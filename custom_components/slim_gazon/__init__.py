@@ -33,6 +33,8 @@ SCENARIOS = [
     "30c_5mm_regen_verwacht",
     "30c_5mm_regen_24u",
     "35c_harde_wind",
+    "25c_bestaand_gras",
+    "30c_rond_maaibeurt",
     "automatisering_uit",
     "sensoren_onbekend",
 ]
@@ -193,7 +195,7 @@ def _async_register_services(hass: HomeAssistant) -> None:
 
 
 def _scenario_overrides(scenario: str) -> dict:
-    """Vertaal een testscenario naar plan-overrides."""
+    """Vertaal een testscenario naar plan-overrides (een preview, geen echte run)."""
     prefix = scenario[:3]
     temps = {
         "10c": 10,
@@ -205,8 +207,17 @@ def _scenario_overrides(scenario: str) -> dict:
         "40c": 40,
     }
     temp = temps.get(prefix, 30 if scenario == "automatisering_uit" else 16)
+    # Per-week stadia sproeien alleen als het tekort de adviesdiepte haalt; geef
+    # die scenario's een opgebouwd tekort zodat de preview een sproeidag toont.
+    if scenario == "25c_bestaand_gras":
+        fase, carry = "bestaand_gras", 20.0
+    elif scenario == "30c_rond_maaibeurt":
+        fase, carry = "rond_eerste_maaibeurt", 20.0
+    else:
+        fase, carry = "pas_ingezaaid", 0.0
     return {
-        "fase": "pas_ingezaaid",
+        "fase": fase,
+        "carry_mm": carry,
         "temp_max": temp,
         "regen_vandaag": 5 if scenario == "30c_5mm_regen_verwacht" else 0,
         "regen_24u": 5 if scenario == "30c_5mm_regen_24u" else 0,
