@@ -84,6 +84,9 @@ WET_CONDITIONS = {
     "rainy",
     "snowy-rainy",
 }
+# Condities in het weerbericht die als bewolkt/nat resp. helder/zonnig tellen.
+CLOUDY_CONDITIONS = WET_CONDITIONS | {"snowy", "lightning", "exceptional"}
+SUNNY_CONDITIONS = {"sunny", "clear", "clear-night"}
 
 UNAVAILABLE_STATES = {STATE_UNKNOWN, STATE_UNAVAILABLE, "", "none", "None"}
 
@@ -349,6 +352,64 @@ class LawnCoordinator:
             return []
         return response[weather].get("forecast", []) or []
 
+    def _assess_sky(
+        self, hourly: list[dict], daily: list[dict], today
+    ) -> tuple[bool, bool, bool]:
+        """Hoe bewolkt/zonnig wordt de dág volgens het weerbericht.
+
+        Geeft (heeft_verwachting, bewolkt, zonnig). Kijkt naar de condities
+        overdag (8–20u) in de uur-verwachting — niet naar de toevallige bewolking
+        op het rekenmoment — en valt terug op de dag-verwachting. `cloud_coverage`
+        wordt gebruikt als de verwachting dat levert.
+        """
+        cloudy_h = sunny_h = total = 0
+        cover: list[float] = []
+        for item in hourly:
+            parsed = dt_util.parse_datetime(str(item.get("datetime", "")))
+            if parsed is None:
+                continue
+            local = dt_util.as_local(parsed)
+            if local.date() != today or not 8 <= local.hour < 20:
+                continue
+            total += 1
+            cond = str(item.get("condition", "")).lower()
+            if cond in CLOUDY_CONDITIONS:
+                cloudy_h += 1
+            elif cond in SUNNY_CONDITIONS:
+                sunny_h += 1
+            cc = item.get("cloud_coverage")
+            if cc is not None:
+                try:
+                    cover.append(float(cc))
+                except (TypeError, ValueError):
+                    pass
+        if total:
+            cloudy_frac = cloudy_h / total
+            sunny_frac = sunny_h / total
+            if cover:
+                avg = sum(cover) / len(cover)
+                cloudy = avg >= 65 or cloudy_frac >= 0.5
+                sunny = (avg <= 35 or sunny_frac >= 0.5) and not cloudy
+            else:
+                cloudy = cloudy_frac >= 0.5
+                sunny = sunny_frac >= 0.5 and not cloudy
+            return True, cloudy, sunny
+        # Geen uur-data: gebruik de dag-verwachting van vandaag.
+        for item in daily:
+            parsed = dt_util.parse_datetime(str(item.get("datetime", "")))
+            if parsed is None or dt_util.as_local(parsed).date() != today:
+                continue
+            cc = item.get("cloud_coverage")
+            if cc is not None:
+                try:
+                    avg = float(cc)
+                    return True, avg >= 65, avg <= 35
+                except (TypeError, ValueError):
+                    pass
+            cond = str(item.get("condition", "")).lower()
+            return True, cond in CLOUDY_CONDITIONS, cond in SUNNY_CONDITIONS
+        return False, False, False
+
     # -- plan berekenen ----------------------------------------------------
     async def async_calculate_plan(self, overrides: dict | None = None) -> dict:
         """Bereken een nieuw dagplan en sla het op."""
@@ -417,20 +478,26 @@ class LawnCoordinator:
         uv_index = self._state_float(CONF_UV, 0.0)
         straling = self._state_float(CONF_SOLAR, 0.0)
 
-        weather_state = ""
-        weather_eid = self.conf(CONF_WEATHER)
-        if weather_eid and (st := self.hass.states.get(weather_eid)):
-            weather_state = st.state
-        detail_state = ""
-        detail_eid = self.conf(CONF_DETAIL)
-        if detail_eid and (st := self.hass.states.get(detail_eid)):
-            detail_state = str(st.state).lower()
-        bewolkt_of_nat = (
-            weather_state in WET_CONDITIONS
-            or "bewolkt" in detail_state
-            or "regen" in detail_state
-            or "bui" in detail_state
-        )
+        # Bewolkt/zonnig vooral uit het weerbericht voor de dag; alleen als er
+        # geen verwachting is, terugvallen op de toestand op het rekenmoment.
+        have_sky, forecast_cloudy, zonnig = self._assess_sky(hourly, daily, today)
+        if have_sky:
+            bewolkt_of_nat = forecast_cloudy
+        else:
+            weather_state = ""
+            weather_eid = self.conf(CONF_WEATHER)
+            if weather_eid and (st := self.hass.states.get(weather_eid)):
+                weather_state = st.state
+            detail_state = ""
+            detail_eid = self.conf(CONF_DETAIL)
+            if detail_eid and (st := self.hass.states.get(detail_eid)):
+                detail_state = str(st.state).lower()
+            bewolkt_of_nat = (
+                weather_state in WET_CONDITIONS
+                or "bewolkt" in detail_state
+                or "regen" in detail_state
+                or "bui" in detail_state
+            )
 
         bodemvocht = self._state_float(CONF_SOIL, -1.0) if self.conf(CONF_SOIL) else -1.0
 
@@ -452,6 +519,7 @@ class LawnCoordinator:
             bodemvocht=bodemvocht,
             forecast_items_count=forecast_items_count,
             carry_mm=carry_in,
+            zonnig=zonnig,
         )
         params = self._build_params()
         plan = calculate(inputs, params)
@@ -488,6 +556,7 @@ class LawnCoordinator:
             "straling": straling,
             "bodemvocht": bodemvocht,
             "bewolkt_of_nat": bewolkt_of_nat,
+            "zonnig": zonnig,
             "fase": fase,
             "dagbehoefte_mm": plan.daily_need,
             "regen_aftrek_mm": plan.rain_offset,

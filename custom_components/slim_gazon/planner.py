@@ -62,6 +62,8 @@ class PlanInputs:
     forecast_items_count: int = 0
     # Lopend watertekort (mm) dat vandaag in ging — kern van de waterbalans.
     carry_mm: float = 0.0
+    # De dag wordt volgens het weerbericht overwegend zonnig/helder.
+    zonnig: bool = False
 
 
 @dataclass(slots=True)
@@ -169,20 +171,36 @@ def _cold_factor(temp: float) -> float:
     return max(0.0, min(1.0, (temp - 5) / 5))
 
 
+# Op een warme, droge dag telt de bewolkt/nat-melding niet mee in de weerfactor:
+# als het amper geregend heeft (< 2 mm in 24u) én het warm is (> 25 °C), blijft de
+# verdamping hoog ondanks wat wolken — dan niet 20% afschalen.
+HOT_DRY_RAIN_24H_MM = 2.0
+HOT_DRY_TEMP_C = 25.0
+
+
 def _weather_factor(inputs: PlanInputs, params: PlanParams) -> float:
     """Schaal de zonnige-dag-behoefte naar de werkelijke dag.
 
     De tabel gaat uit van volle zon, dus de factor blijft vooral ≤ 1: bewolkt/nat
     of vochtig weer verlaagt de behoefte; droge hitte en wind verhogen 'm iets.
+    Uitzondering: op een warme, droge dag (zie HOT_DRY_*) telt de bewolkt/nat-
+    melding niet mee.
     """
     wf = 1.0
     if inputs.luchtvochtigheid <= params.rv_laag and inputs.temp_max >= params.temp_warm:
         wf += 0.10
     elif inputs.luchtvochtigheid >= params.rv_hoog:
         wf -= 0.10
-    if inputs.bewolkt_of_nat:
+    hot_dry = (
+        inputs.regen_24u < HOT_DRY_RAIN_24H_MM and inputs.temp_max > HOT_DRY_TEMP_C
+    )
+    if inputs.bewolkt_of_nat and not hot_dry:
         wf -= 0.20
-    elif inputs.uv_index >= params.uv_hoog or inputs.straling >= params.straling_hoog:
+    elif (
+        inputs.zonnig
+        or inputs.uv_index >= params.uv_hoog
+        or inputs.straling >= params.straling_hoog
+    ):
         wf += 0.05
     if params.wind_minderen <= inputs.wind_dag_max < params.wind_stop:
         wf += 0.05
