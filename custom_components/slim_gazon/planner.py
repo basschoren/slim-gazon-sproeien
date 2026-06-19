@@ -1,29 +1,32 @@
-"""Berekening van het slimme dagplan (waterbalans).
+"""Berekening van het slimme dagplan.
 
-De basis is het sproeiadvies uit `sproeiadvies_gazon_temperatuurklassen.xlsx`
-(zie `ADVICE` in const.py): voor een **zonnige dag** geeft de tabel per
-temperatuurklasse en grasstadium de dagbehoefte (mm/dag) en de adviesdiepte per
-beurt. Sommige stadia zijn "per week" (diep & weinig), andere "per dag".
+Twee soorten bewatering, afhankelijk van de grasfase:
 
-Bovenop die basis ligt een **slim, adaptief algoritme**:
+* **Diepe bewatering** (jong gras, rond eerste maaibeurt, volgroeid gazon):
+  een lopende **waterbalans** (tekort). De basis is het sproeiadvies uit
+  `sproeiadvies_gazon_temperatuurklassen.xlsx` (zie `ADVICE` in const.py): voor
+  een zonnige dag de dagbehoefte (mm/dag) en de adviesdiepte per beurt. Een
+  weerfactor schaalt dat naar de werkelijke dag; regen (incl. nowcast) wordt
+  afgetrokken; er wordt pas (diep) gesproeid als het tekort de adviesdiepte
+  haalt. Genoeg regen → de dag overslaan.
 
-* een **weerfactor** schaalt de zonnige-dag-behoefte naar de werkelijke dag op
-  basis van bewolking/zon, luchtvochtigheid en wind;
-* een **lopende waterbalans** (tekort) telt elke dag de behoefte op en trekt de
-  gevallen/verwachte regen af. Pas wanneer het tekort de adviesdiepte bereikt,
-  wordt er gesproeid. Zo ontstaat vanzelf de juiste frequentie: bij zaad meerdere
-  beurten per dag, bij volgroeid gras een diepe beurt ~2× per week.
+* **Toplaag-onderhoud** (net ingezaaid, kiemend gras): hier telt niet de totale
+  mm maar of de bovenste 0–2 cm vochtig blijft. Nachtregen telt als buffer maar
+  blokkeert de dag niet: een **toplaag-uitdroogrisico** (uit temperatuur,
+  zon/straling, wind en luchtvochtigheid op dat moment) bepaalt of er een korte
+  onderhoudsbeurt nodig is. Omdat de straling 's ochtends laag en 's middags hoog
+  is en het plan meerdere keren per dag wordt herberekend, ontstaat vanzelf
+  "ochtend overslaan, later op de dag wél een korte beurt".
 
-De waterbalans-staat (het tekort dat tussen dagen wordt meegenomen, en het al
-gegeven water van vandaag) leeft in de coördinator; deze module is een pure
-functie: gegeven het tekort van vandaag en de meetwaarden, geeft het het plan.
+De waterbalans-staat leeft in de coördinator; deze module is een pure functie.
+Belangrijkste functies: `calculate` (kiest de fase-aanpak), `calculate_rain_credit`,
+`calculate_top_layer_dry_risk`, `should_do_maintenance_watering`.
 """
 
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-
 from decimal import ROUND_HALF_UP, Decimal
 
 from .const import (
@@ -36,11 +39,24 @@ from .const import (
     AdviceCell,
 )
 
+# Op een warme, droge dag telt de bewolkt/nat-melding niet mee in de weerfactor:
+# als het amper geregend heeft (< 2 mm in 24u) én het warm is (> 25 °C), blijft de
+# verdamping hoog ondanks wat wolken — dan niet 20% afschalen.
+HOT_DRY_RAIN_24H_MM = 2.0
+HOT_DRY_TEMP_C = 25.0
+
+# Fases waarvoor toplaag-onderhoud geldt (i.p.v. diepe bewatering).
+TOPLAAG_PHASES = (PHASE_NEW, PHASE_GERM)
+
 
 def _round(value: float, ndigits: int = 0) -> float:
     """Rond af zoals Jinja's `round` filter (half naar boven)."""
     quant = Decimal(1).scaleb(-ndigits)
     return float(Decimal(str(value)).quantize(quant, rounding=ROUND_HALF_UP))
+
+
+def _clamp(value: float, low: float, high: float) -> float:
+    return max(low, min(value, high))
 
 
 @dataclass(slots=True)
@@ -64,6 +80,10 @@ class PlanInputs:
     carry_mm: float = 0.0
     # De dag wordt volgens het weerbericht overwegend zonnig/helder.
     zonnig: bool = False
+    # Huidige (momentane) waarden voor het toplaag-risico en regen-checks.
+    temp_nu: float | None = None
+    regen_nu_mmh: float = 0.0
+    regen_komt_binnen_min: float | None = None
 
 
 @dataclass(slots=True)
@@ -89,6 +109,9 @@ class PlanParams:
     straling_hoog: float
     bodemvocht_nat: float
     max_runtime: float
+    toplaag_risico_drempel: float = 50.0
+    max_beurten_per_dag: float = 4.0
+    regen_soon_min: float = 90.0
 
 
 @dataclass(slots=True)
@@ -124,6 +147,10 @@ class Plan:
     hard_stop_reason: str | None
     soil_reset: bool
     capped: bool
+    mode: str
+    dry_risk: float
+    rain_credit: float
+    decision: str
     reason: str
     summary: str
     slots: list[Slot] = field(default_factory=list)
@@ -171,15 +198,8 @@ def _cold_factor(temp: float) -> float:
     return max(0.0, min(1.0, (temp - 5) / 5))
 
 
-# Op een warme, droge dag telt de bewolkt/nat-melding niet mee in de weerfactor:
-# als het amper geregend heeft (< 2 mm in 24u) én het warm is (> 25 °C), blijft de
-# verdamping hoog ondanks wat wolken — dan niet 20% afschalen.
-HOT_DRY_RAIN_24H_MM = 2.0
-HOT_DRY_TEMP_C = 25.0
-
-
 def _weather_factor(inputs: PlanInputs, params: PlanParams) -> float:
-    """Schaal de zonnige-dag-behoefte naar de werkelijke dag.
+    """Schaal de zonnige-dag-behoefte naar de werkelijke dag (diepe bewatering).
 
     De tabel gaat uit van volle zon, dus de factor blijft vooral ≤ 1: bewolkt/nat
     of vochtig weer verlaagt de behoefte; droge hitte en wind verhogen 'm iets.
@@ -207,17 +227,75 @@ def _weather_factor(inputs: PlanInputs, params: PlanParams) -> float:
     return _round(max(0.55, min(wf, 1.15)), 2)
 
 
-def _rain_offset(regen_vandaag: float, regen_middag: float, toplaag: bool) -> float:
-    """Hoeveel mm behoefte de regen van vandaag wegneemt.
+def calculate_rain_credit(inputs: PlanInputs, params: PlanParams, toplaag: bool) -> float:
+    """Hoeveel mm behoefte de regen van vandaag wegneemt (de regen-credit).
 
     Regen vóór de middag telt volledig; regen ná de middag telt voor zaad/kiemend
-    minder mee, want de toplaag moet 's ochtends al vochtig zijn (de middagbui
-    komt te laat om de ochtendbeurt te vervangen).
+    minder mee, want de toplaag moet 's ochtends al vochtig zijn (een middagbui
+    komt te laat om de ochtendbeurt te vervangen). Regen onder de negeer-drempel
+    telt als 0.
     """
+    drempel = params.regen_negeren_onder
+    regen_vandaag = 0.0 if inputs.regen_vandaag < drempel else _round(inputs.regen_vandaag, 1)
+    regen_middag = 0.0 if inputs.regen_vandaag < drempel else _round(inputs.regen_middag, 1)
     voor = min(regen_middag, regen_vandaag)
     na = max(0.0, regen_vandaag - voor)
     gewicht_na = 0.4 if toplaag else 0.9
     return _round(max(0.0, voor + na * gewicht_na), 1)
+
+
+def calculate_top_layer_dry_risk(inputs: PlanInputs, params: PlanParams) -> float:
+    """Risico (0–100) dat de bovenste 0–2 cm uitdroogt, op dít moment.
+
+    Hoog bij warm, veel zon/straling, wind en droge lucht; lager bij bewolking.
+    Gebruikt de huidige temperatuur (niet de dagmax), zodat het 's ochtends laag
+    is en 's middags hoog — precies wanneer de toplaag echt uitdroogt.
+    """
+    temp = inputs.temp_nu if inputs.temp_nu is not None else inputs.temp_max
+    temp_term = _clamp((temp - 15) / 20, 0, 1)  # 15 °C → 0, 35 °C → 1
+    sun_term = max(
+        _clamp(inputs.straling / max(params.straling_hoog, 1), 0, 1),
+        _clamp(inputs.uv_index / max(params.uv_hoog, 1), 0, 1),
+    )
+    wind_term = _clamp(inputs.wind_dag_max / max(params.wind_stop, 1), 0, 1)
+    dry_air_term = _clamp((100 - inputs.luchtvochtigheid) / 100, 0, 1)
+    risk = 100 * (0.40 * temp_term + 0.30 * sun_term + 0.15 * wind_term + 0.15 * dry_air_term)
+    if inputs.bewolkt_of_nat:
+        risk *= 0.65
+    return _round(_clamp(risk, 0, 100), 0)
+
+
+def should_do_maintenance_watering(
+    inputs: PlanInputs, params: PlanParams, dry_risk: float
+) -> tuple[bool, str]:
+    """Bepaal of een korte toplaag-onderhoudsbeurt nu zinvol is (met uitleg)."""
+    if not inputs.automatisering_aan:
+        return False, "automatisch sproeien staat uit"
+    if inputs.wind_dag_max >= params.wind_stop:
+        return False, f"wind te hard ({inputs.wind_dag_max} km/h) — niet sproeien"
+    if inputs.regen_nu_mmh > 0:
+        return False, "het regent nu — geen onderhoudsbeurt nodig"
+    if (
+        inputs.regen_komt_binnen_min is not None
+        and inputs.regen_komt_binnen_min <= params.regen_soon_min
+    ):
+        return (
+            False,
+            f"regen binnen {int(inputs.regen_komt_binnen_min)} min verwacht — beurt uitgesteld",
+        )
+    if inputs.bodemvocht >= 0 and inputs.bodemvocht >= params.bodemvocht_nat:
+        return False, f"bodem is nat ({inputs.bodemvocht}%) — toplaag nog vochtig"
+    if dry_risk < params.toplaag_risico_drempel:
+        return (
+            False,
+            f"toplaag-risico {dry_risk}% onder drempel {params.toplaag_risico_drempel}% "
+            "— toplaag blijft voorlopig vochtig genoeg",
+        )
+    return (
+        True,
+        f"toplaag-risico {dry_risk}% ≥ drempel {params.toplaag_risico_drempel}% "
+        "— korte onderhoudsbeurt om de bovenlaag vochtig te houden",
+    )
 
 
 def _hhmm_to_min(value: str) -> int:
@@ -231,20 +309,101 @@ def _min_to_time(total: int) -> str:
 
 
 def _slot_time(times: tuple[str, ...], index: int, step: int = 90) -> str:
-    """Tijd van beurt `index`. Stabiel per index, ook bij wisselend aantal.
-
-    Tot het aantal aanbevolen momenten gebruiken we die exact; daarboven (een
-    diepe beurt die gesplitst wordt om de veiligheidslimiet te respecteren)
-    spreiden we extra beurten met vaste stappen over de ochtend.
-    """
+    """Tijd van beurt `index`. Stabiel per index, ook bij wisselend aantal."""
     if index < len(times):
         return f"{times[index]}:00"
     extra = index - len(times) + 1
     return _min_to_time(_hhmm_to_min(times[-1]) + extra * step)
 
 
-def calculate(inputs: PlanInputs, params: PlanParams) -> Plan:
-    """Bereken het dagplan op basis van de waterbalans."""
+def _beat_minutes(mm_per_beat: float, params: PlanParams) -> tuple[float, float]:
+    """Looptijd grote/kleine sproeier voor een beurt van `mm_per_beat` mm."""
+    big = small = 0.0
+    if mm_per_beat > 0 and params.grote_rate > 0:
+        big = _round(min(params.max_runtime, _round(mm_per_beat / params.grote_rate * 2, 0) / 2), 1)
+    if mm_per_beat > 0 and params.kleine_rate > 0:
+        small = _round(min(params.max_runtime, _round(mm_per_beat / params.kleine_rate * 2, 0) / 2), 1)
+    return big, small
+
+
+def _maintenance_plan(inputs: PlanInputs, params: PlanParams) -> Plan:
+    """Toplaag-onderhoud voor net ingezaaid en kiemend gras (korte beurten)."""
+    temp_range = _temp_range(inputs.temp_max)
+    cell = _cell(inputs.fase, inputs.temp_max)
+    carry = max(0.0, _round(inputs.carry_mm, 1))
+    rain_credit = calculate_rain_credit(inputs, params, toplaag=True)
+    dry_risk = calculate_top_layer_dry_risk(inputs, params)
+    do, decision = should_do_maintenance_watering(inputs, params, dry_risk)
+
+    n_advies = len(cell.times) if cell else 0
+    n_max = int(max(1, min(SLOT_COUNT, round(params.max_beurten_per_dag))))
+    count = min(n_advies, n_max) if (do and cell) else 0
+
+    max_mm = max(
+        params.min_mm_per_beurt,
+        min(params.max_minuten, params.max_runtime) * params.grote_rate,
+    )
+    mm_per_beat = _round(min(cell.depth, max_mm), 2) if count else 0.0
+    if 0 < mm_per_beat < params.min_mm_per_beurt:
+        mm_per_beat = _round(params.min_mm_per_beurt, 2)
+    big, small = _beat_minutes(mm_per_beat, params)
+
+    slots: list[Slot] = []
+    for i in range(count):
+        slots.append(
+            Slot(
+                index=i + 1,
+                time=_slot_time(cell.times, i),
+                mm=mm_per_beat,
+                big_minutes=big,
+                small_minutes=small,
+                active=True,
+                reason=decision[:100],
+            )
+        )
+
+    total_mm = _round(mm_per_beat * count, 1)
+    buffer_txt = (
+        f"nachtregen/regen meegeteld als buffer: {rain_credit} mm. " if rain_credit > 0 else ""
+    )
+    reason = f"{inputs.fase}; toplaag-onderhoud; {buffer_txt}{decision}"
+    if do:
+        summary = (
+            f"{count}× korte beurt {mm_per_beat} mm (totaal {total_mm} mm); "
+            f"toplaag-risico {dry_risk}%. {decision}"
+        )[:255]
+    else:
+        summary = f"geen onderhoudsbeurt; toplaag-risico {dry_risk}%. {decision}"[:255]
+
+    return Plan(
+        temp_range=temp_range,
+        daily_need=0.0,
+        rain_offset=0.0,
+        carry_in=carry,
+        gross_deficit=0.0,
+        netto_mm=0.0,
+        aantal_beurten=count,
+        mm_per_beurt=mm_per_beat,
+        big_minutes_per_beat=big,
+        small_minutes_per_beat=small,
+        total_mm=total_mm,
+        big_minutes_total=_round(big * count, 1),
+        small_minutes_total=_round(small * count, 1),
+        hard_stop_reason=None,
+        soil_reset=False,
+        capped=False,
+        mode="toplaag",
+        dry_risk=dry_risk,
+        rain_credit=rain_credit,
+        decision=decision,
+        reason=reason,
+        summary=summary,
+        slots=slots,
+    )
+
+
+def _deep_plan(inputs: PlanInputs, params: PlanParams) -> Plan:
+    """Diepe bewatering (jong gras, rond eerste maaibeurt, volgroeid) — waterbalans."""
     fase = inputs.fase
     temp_max = inputs.temp_max
     carry = max(0.0, _round(inputs.carry_mm, 1))
@@ -252,22 +411,20 @@ def calculate(inputs: PlanInputs, params: PlanParams) -> Plan:
     temp_range = _temp_range(temp_max)
     cell = _cell(fase, temp_max)
 
-    # Effectieve regen: alles onder de negeer-drempel telt als 0.
     drempel = params.regen_negeren_onder
     regen_vandaag_eff = 0.0 if inputs.regen_vandaag < drempel else _round(inputs.regen_vandaag, 1)
     regen_24u_eff = 0.0 if inputs.regen_24u < drempel else _round(inputs.regen_24u, 1)
-    regen_middag_eff = 0.0 if inputs.regen_vandaag < drempel else _round(inputs.regen_middag, 1)
 
     weather_factor = _weather_factor(inputs, params)
     cold = _cold_factor(temp_max)
+    dry_risk = calculate_top_layer_dry_risk(inputs, params)
 
     if cell is not None:
         daily_need = _round(cell.daily_need * weather_factor * params.factor * cold, 2)
     else:
         daily_need = 0.0
-    rain_offset = _rain_offset(regen_vandaag_eff, regen_middag_eff, toplaag)
+    rain_offset = calculate_rain_credit(inputs, params, toplaag)
 
-    # Harde stop-redenen.
     soil_reset = False
     if fase == PHASE_MANUAL or cell is None:
         hard_stop: str | None = "fase staat op Alleen handmatig / uit"
@@ -285,8 +442,6 @@ def calculate(inputs: PlanInputs, params: PlanParams) -> Plan:
     else:
         hard_stop = None
 
-    # Het lopende tekort. Bij master uit / alleen-handmatig bevriezen we het
-    # tekort (geen opbouw). Bij natte bodem is de grond de waarheid → reset.
     frozen = fase == PHASE_MANUAL or cell is None or not inputs.automatisering_aan
     if frozen:
         gross_deficit = _round(carry, 1)
@@ -295,8 +450,6 @@ def calculate(inputs: PlanInputs, params: PlanParams) -> Plan:
     else:
         gross_deficit = _round(max(0.0, carry + daily_need - rain_offset), 1)
 
-    # Beurten bepalen (alleen als er geen harde stop is en het tekort de
-    # adviesdiepte haalt).
     beats = 0
     mm_per_beat = 0.0
     capped = False
@@ -304,8 +457,6 @@ def calculate(inputs: PlanInputs, params: PlanParams) -> Plan:
         depth = cell.depth
         n_base = len(cell.times)
         target = min(gross_deficit, depth * n_base)
-        # Max mm per beurt door de veiligheids-/looptijdlimiet (grote sproeier is
-        # het traagst en dus bepalend).
         max_mm = max(
             params.min_mm_per_beurt,
             min(params.max_minuten, params.max_runtime) * params.grote_rate,
@@ -323,21 +474,9 @@ def calculate(inputs: PlanInputs, params: PlanParams) -> Plan:
             beats = 0
             mm_per_beat = 0.0
 
-    big_minutes = 0.0
-    small_minutes = 0.0
-    if beats > 0:
-        if params.grote_rate > 0:
-            big_minutes = _round(
-                min(params.max_runtime, _round(mm_per_beat / params.grote_rate * 2, 0) / 2), 1
-            )
-        if params.kleine_rate > 0:
-            small_minutes = _round(
-                min(params.max_runtime, _round(mm_per_beat / params.kleine_rate * 2, 0) / 2), 1
-            )
-
+    big_minutes, small_minutes = _beat_minutes(mm_per_beat if beats else 0.0, params)
     total_mm = _round(mm_per_beat * beats, 1)
 
-    # Reden-tekst.
     if hard_stop is not None:
         reason = f"overgeslagen: {hard_stop}"
     elif beats == 0:
@@ -392,7 +531,18 @@ def calculate(inputs: PlanInputs, params: PlanParams) -> Plan:
         hard_stop_reason=hard_stop,
         soil_reset=soil_reset,
         capped=capped,
+        mode="diep",
+        dry_risk=dry_risk,
+        rain_credit=rain_offset,
+        decision=reason,
         reason=reason,
         summary=summary,
         slots=slots,
     )
+
+
+def calculate(inputs: PlanInputs, params: PlanParams) -> Plan:
+    """Bereken het dagplan; kiest toplaag-onderhoud of diepe bewatering per fase."""
+    if inputs.fase in TOPLAAG_PHASES:
+        return _maintenance_plan(inputs, params)
+    return _deep_plan(inputs, params)

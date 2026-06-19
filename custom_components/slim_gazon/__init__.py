@@ -35,6 +35,11 @@ SCENARIOS = [
     "35c_harde_wind",
     "25c_bestaand_gras",
     "30c_rond_maaibeurt",
+    "s1_volgroeid_8mm_zon",
+    "s2_net_ingezaaid_8mm_heet",
+    "s3_kiemend_4mm_heet_wind",
+    "s4_net_ingezaaid_regen_komt",
+    "s5_jong_5mm_halfbewolkt",
     "automatisering_uit",
     "sensoren_onbekend",
 ]
@@ -196,6 +201,41 @@ def _async_register_services(hass: HomeAssistant) -> None:
 
 def _scenario_overrides(scenario: str) -> dict:
     """Vertaal een testscenario naar plan-overrides (een preview, geen echte run)."""
+    # Uitgewerkte fase-scenario's (de gewenste testgevallen). Waarden simuleren het
+    # moment waarop de planner draait (temp_nu/straling als "nu").
+    detailed = {
+        # 1. Volgroeid, 8 mm nachtregen, 25 C zonnig -> diepe logica slaat over.
+        "s1_volgroeid_8mm_zon": {
+            "fase": "bestaand_gras", "temp_max": 25, "temp_nu": 25, "regen_24u": 8,
+            "straling": 700, "uv_index": 7, "luchtvochtigheid": 50, "bewolkt_of_nat": False,
+        },
+        # 2. Net ingezaaid, 8 mm nachtregen, 28 C zonnig veel straling (middag) ->
+        #    toplaag-risico hoog -> korte onderhoudsbeurt ondanks nachtregen.
+        "s2_net_ingezaaid_8mm_heet": {
+            "fase": "pas_ingezaaid", "temp_max": 28, "temp_nu": 28, "regen_24u": 8,
+            "straling": 800, "uv_index": 8, "luchtvochtigheid": 40, "bewolkt_of_nat": False,
+        },
+        # 3. Kiemend, 4 mm nachtregen, 30 C zonnig + wind -> meerdere korte beurten.
+        "s3_kiemend_4mm_heet_wind": {
+            "fase": "kiemend", "temp_max": 30, "temp_nu": 30, "regen_24u": 4,
+            "straling": 750, "uv_index": 8, "wind": 22, "luchtvochtigheid": 35,
+            "bewolkt_of_nat": False,
+        },
+        # 4. Net ingezaaid, geen regen, maar regen binnen 30 min -> beurt uitstellen.
+        "s4_net_ingezaaid_regen_komt": {
+            "fase": "pas_ingezaaid", "temp_max": 26, "temp_nu": 26, "regen_24u": 0,
+            "straling": 600, "uv_index": 6, "luchtvochtigheid": 55,
+            "regen_binnen_min": 30, "bewolkt_of_nat": False,
+        },
+        # 5. Jong gras, 5 mm nachtregen, 24 C half bewolkt -> minder snel sproeien.
+        "s5_jong_5mm_halfbewolkt": {
+            "fase": "jong_gras", "temp_max": 24, "temp_nu": 24, "regen_24u": 5,
+            "straling": 300, "uv_index": 3, "luchtvochtigheid": 65, "bewolkt_of_nat": True,
+        },
+    }
+    if scenario in detailed:
+        return {"automatisering_aan": True, "carry_mm": 0.0, **detailed[scenario]}
+
     prefix = scenario[:3]
     temps = {
         "10c": 10,
@@ -219,6 +259,7 @@ def _scenario_overrides(scenario: str) -> dict:
         "fase": fase,
         "carry_mm": carry,
         "temp_max": temp,
+        "temp_nu": temp,
         "regen_vandaag": 5 if scenario == "30c_5mm_regen_verwacht" else 0,
         "regen_24u": 5 if scenario == "30c_5mm_regen_24u" else 0,
         "wind": 35 if scenario == "35c_harde_wind" else 5,

@@ -399,6 +399,35 @@ NUMBER_PARAMS: tuple[NumberParam, ...] = (
         unit="min",
         icon="mdi:timer-alert",
     ),
+    NumberParam(
+        key="toplaag_risico_drempel",
+        name="Toplaag risico drempel",
+        default=50.0,
+        min=0.0,
+        max=100.0,
+        step=5.0,
+        unit="%",
+        icon="mdi:water-alert-outline",
+    ),
+    NumberParam(
+        key="max_beurten_per_dag",
+        name="Max sproeibeurten per dag",
+        default=4.0,
+        min=1.0,
+        max=8.0,
+        step=1.0,
+        icon="mdi:counter",
+    ),
+    NumberParam(
+        key="regen_binnen_minuten",
+        name="Uitstellen bij regen binnen",
+        default=90.0,
+        min=0.0,
+        max=180.0,
+        step=15.0,
+        unit="min",
+        icon="mdi:weather-rainy",
+    ),
 )
 
 # Snelle opzoeklijst van defaults op sleutel.

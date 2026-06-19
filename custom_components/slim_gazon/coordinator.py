@@ -64,7 +64,9 @@ from .const import (
     KEY_WB_RAIN,
     NOWCAST_ONSET_MMH,
     NUMBER_DEFAULTS,
+    PHASE_GERM,
     PHASE_MANUAL,
+    PHASE_NEW,
     SIGNAL_UPDATE,
     STORE_VERSION,
     WB_MAX_CARRY,
@@ -449,7 +451,7 @@ class LawnCoordinator:
         forecast_items_count = len(hourly)
 
         # Meetwaarden (met optionele test-overrides).
-        temp_now = self._state_float(CONF_TEMP, 16.0)
+        temp_now = float(overrides.get("temp_nu", self._state_float(CONF_TEMP, 16.0)))
         temp_max = float(overrides.get("temp_max", self._state_float(CONF_TEMP_MAX, temp_now)))
 
         # Nowcast (Buienalarm) geeft hoge-resolutie regen vooruit; gebruik die om
@@ -474,9 +476,19 @@ class LawnCoordinator:
         wind_now = self._state_float(CONF_WIND, 0.0)
         wind_dag_max = float(overrides.get("wind", round(max(forecast_wind_max, wind_now), 1)))
 
-        luchtvochtigheid = self._state_float(CONF_HUMIDITY, 60.0)
-        uv_index = self._state_float(CONF_UV, 0.0)
-        straling = self._state_float(CONF_SOLAR, 0.0)
+        # Momentane regen (mm/h) en minuten tot regen (nowcast) voor de
+        # toplaag-beslissing.
+        regen_nu = float(overrides.get("regen_nu", self.rain_now()))
+        nowcast_minuten = (
+            nowcast.minutes_until_rain if nowcast and nowcast.available else None
+        )
+        regen_binnen_min = overrides.get("regen_binnen_min", nowcast_minuten)
+
+        luchtvochtigheid = float(
+            overrides.get("luchtvochtigheid", self._state_float(CONF_HUMIDITY, 60.0))
+        )
+        uv_index = float(overrides.get("uv_index", self._state_float(CONF_UV, 0.0)))
+        straling = float(overrides.get("straling", self._state_float(CONF_SOLAR, 0.0)))
 
         # Bewolkt/zonnig vooral uit het weerbericht voor de dag; alleen als er
         # geen verwachting is, terugvallen op de toestand op het rekenmoment.
@@ -498,8 +510,14 @@ class LawnCoordinator:
                 or "regen" in detail_state
                 or "bui" in detail_state
             )
+        if "bewolkt_of_nat" in overrides:
+            bewolkt_of_nat = bool(overrides["bewolkt_of_nat"])
+        if "zonnig" in overrides:
+            zonnig = bool(overrides["zonnig"])
 
-        bodemvocht = self._state_float(CONF_SOIL, -1.0) if self.conf(CONF_SOIL) else -1.0
+        bodemvocht = float(overrides["bodemvocht"]) if "bodemvocht" in overrides else (
+            self._state_float(CONF_SOIL, -1.0) if self.conf(CONF_SOIL) else -1.0
+        )
 
         fase = str(overrides.get("fase", self.phase))
         master = bool(overrides.get("automatisering_aan", self.master_on))
@@ -520,6 +538,9 @@ class LawnCoordinator:
             forecast_items_count=forecast_items_count,
             carry_mm=carry_in,
             zonnig=zonnig,
+            temp_nu=temp_now,
+            regen_nu_mmh=regen_nu,
+            regen_komt_binnen_min=regen_binnen_min,
         )
         params = self._build_params()
         plan = calculate(inputs, params)
@@ -558,6 +579,10 @@ class LawnCoordinator:
             "bewolkt_of_nat": bewolkt_of_nat,
             "zonnig": zonnig,
             "fase": fase,
+            "sproeimodus": plan.mode,
+            "toplaag_risico": plan.dry_risk,
+            "regen_credit_mm": plan.rain_credit,
+            "beslissing": plan.decision,
             "dagbehoefte_mm": plan.daily_need,
             "regen_aftrek_mm": plan.rain_offset,
             "tekort_begin_mm": plan.carry_in,
@@ -611,6 +636,9 @@ class LawnCoordinator:
             straling_hoog=v("straling_hoog_wm2"),
             bodemvocht_nat=v("bodemvocht_nat"),
             max_runtime=v("max_runtime_minuten"),
+            toplaag_risico_drempel=v("toplaag_risico_drempel"),
+            max_beurten_per_dag=v("max_beurten_per_dag"),
+            regen_soon_min=v("regen_binnen_minuten"),
         )
 
     # -- waterbalans -------------------------------------------------------
@@ -637,7 +665,10 @@ class LawnCoordinator:
         return round(max(0.0, gross - self.wb_applied), 1)
 
     async def _credit_applied(self, big_minutes: float, small_minutes: float) -> None:
-        """Boek daadwerkelijk gegeven water af van het tekort."""
+        """Boek daadwerkelijk gegeven water af van het tekort (diepe bewatering)."""
+        # Toplaag-onderhoud (net ingezaaid/kiemend) gebruikt het diepe tekort niet.
+        if self.phase in (PHASE_NEW, PHASE_GERM):
+            return
         applied = max(
             big_minutes * self.get_value("grote_rate"),
             small_minutes * self.get_value("kleine_rate"),

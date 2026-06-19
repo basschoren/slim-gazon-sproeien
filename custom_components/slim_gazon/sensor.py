@@ -126,6 +126,28 @@ SENSORS: tuple[LawnSensorDescription, ...] = (
         value_fn=lambda c: c.water_deficit(),
     ),
     LawnSensorDescription(
+        key="toplaag_risico",
+        name="Toplaag uitdroogrisico",
+        icon="mdi:water-alert-outline",
+        native_unit_of_measurement="%",
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda c: _plan(c, "dry_risk"),
+    ),
+    LawnSensorDescription(
+        key="regen_credit",
+        name="Regen credit",
+        icon="mdi:weather-rainy",
+        native_unit_of_measurement="mm",
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda c: _plan(c, "rain_credit"),
+    ),
+    LawnSensorDescription(
+        key="laatste_beslissing",
+        name="Laatste beslissing",
+        icon="mdi:message-text-outline",
+        value_fn=lambda c: (_plan(c, "decision") or _plan(c, "reason", ""))[:255],
+    ),
+    LawnSensorDescription(
         key="big_minutes_total",
         name="Geplande grote sproeier minuten",
         icon="mdi:sprinkler-variant",
