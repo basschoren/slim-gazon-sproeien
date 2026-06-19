@@ -157,6 +157,7 @@ def _async_register_services(hass: HomeAssistant) -> None:
                 big_minutes=call.data["big_minutes"],
                 small_minutes=call.data["small_minutes"],
                 force_test=call.data["force_test"],
+                manual=True,
             )
 
     async def _start_big(call: ServiceCall) -> None:
@@ -170,13 +171,13 @@ def _async_register_services(hass: HomeAssistant) -> None:
     async def _manual_short(call: ServiceCall) -> None:
         for coord in _loaded_coordinators(hass):
             await coord.async_run_cycle(
-                "Handmatig korte sproeibeurt", "Handmatig kort", *MANUAL_SHORT
+                "Handmatig korte sproeibeurt", "Handmatig kort", *MANUAL_SHORT, manual=True
             )
 
     async def _manual_normal(call: ServiceCall) -> None:
         for coord in _loaded_coordinators(hass):
             await coord.async_run_cycle(
-                "Handmatig normale sproeibeurt", "Handmatig normaal", *MANUAL_NORMAL
+                "Handmatig normale sproeibeurt", "Handmatig normaal", *MANUAL_NORMAL, manual=True
             )
 
     async def _stop_all(call: ServiceCall) -> None:

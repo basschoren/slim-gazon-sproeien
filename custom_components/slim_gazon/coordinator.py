@@ -703,14 +703,24 @@ class LawnCoordinator:
         big_minutes: float,
         small_minutes: float,
         force_test: bool = False,
+        manual: bool = False,
     ) -> None:
-        """Voer veilig een sproeibeurt uit (met alle veiligheidschecks)."""
-        if not self.master_on:
-            await self._skip(slot_label, "master staat uit")
-            return
-        if self.phase == PHASE_MANUAL:
-            await self._skip(slot_label, "gazonfase staat op Alleen handmatig / uit")
-            return
+        """Voer veilig een sproeibeurt uit (met alle veiligheidschecks).
+
+        `manual=True` is een handmatige beurt (knop of service). Die negeert
+        bewust de automatiserings-schakelaar (master) en de fase
+        "alleen handmatig / uit", zodat handmatig sproeien áltijd kan — die
+        twee schakelaars sturen alleen het automatische plan. De echte
+        veiligheidschecks (al bezig, sproeier niet beschikbaar, testmodus,
+        regenstop) blijven ook voor handmatig gelden.
+        """
+        if not manual:
+            if not self.master_on:
+                await self._skip(slot_label, "master staat uit")
+                return
+            if self.phase == PHASE_MANUAL:
+                await self._skip(slot_label, "gazonfase staat op Alleen handmatig / uit")
+                return
         if self.busy or (self._cycle_task and not self._cycle_task.done()):
             await self._skip(slot_label, "er loopt al een sproeibeurt", notify=False)
             return
@@ -811,10 +821,14 @@ class LawnCoordinator:
         return False
 
     async def async_start_big(self, minutes: float) -> None:
-        await self.async_run_cycle("Handmatig grote sproeier", "Start grote sproeier", minutes, 0)
+        await self.async_run_cycle(
+            "Handmatig grote sproeier", "Start grote sproeier", minutes, 0, manual=True
+        )
 
     async def async_start_small(self, minutes: float) -> None:
-        await self.async_run_cycle("Handmatig kleine sproeier", "Start kleine sproeier", 0, minutes)
+        await self.async_run_cycle(
+            "Handmatig kleine sproeier", "Start kleine sproeier", 0, minutes, manual=True
+        )
 
     async def async_stop_all(self) -> None:
         """Stop alle sproeiers en annuleer een lopende beurt."""

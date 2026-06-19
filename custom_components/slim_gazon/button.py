@@ -40,7 +40,7 @@ BUTTONS: tuple[LawnButtonDescription, ...] = (
         name="Handmatig kort sproeien",
         icon="mdi:sprinkler",
         action=lambda c: c.async_run_cycle(
-            "Handmatig korte sproeibeurt", "Handmatig kort", *MANUAL_SHORT
+            "Handmatig korte sproeibeurt", "Handmatig kort", *MANUAL_SHORT, manual=True
         ),
     ),
     LawnButtonDescription(
@@ -48,7 +48,7 @@ BUTTONS: tuple[LawnButtonDescription, ...] = (
         name="Handmatig normaal sproeien",
         icon="mdi:sprinkler-variant",
         action=lambda c: c.async_run_cycle(
-            "Handmatig normale sproeibeurt", "Handmatig normaal", *MANUAL_NORMAL
+            "Handmatig normale sproeibeurt", "Handmatig normaal", *MANUAL_NORMAL, manual=True
         ),
     ),
 )
