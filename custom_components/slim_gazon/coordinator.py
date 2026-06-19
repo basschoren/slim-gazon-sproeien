@@ -432,6 +432,7 @@ class LawnCoordinator:
 
         forecast_regen_vandaag = 0.0
         forecast_regen_middag = 0.0
+        forecast_regen_avond = 0.0
         forecast_wind_max = 0.0
         source = hourly if hourly else daily
         for item in source:
@@ -445,6 +446,8 @@ class LawnCoordinator:
             forecast_regen_vandaag += precip
             if hourly and local.hour < 12:
                 forecast_regen_middag += precip
+            if hourly and local.hour >= 17:
+                forecast_regen_avond += precip
             wind = float(item.get("wind_speed") or 0.0)
             forecast_wind_max = max(forecast_wind_max, wind)
 
@@ -483,6 +486,7 @@ class LawnCoordinator:
             nowcast.minutes_until_rain if nowcast and nowcast.available else None
         )
         regen_binnen_min = overrides.get("regen_binnen_min", nowcast_minuten)
+        regen_avond = float(overrides.get("regen_avond", round(forecast_regen_avond, 1)))
 
         luchtvochtigheid = float(
             overrides.get("luchtvochtigheid", self._state_float(CONF_HUMIDITY, 60.0))
@@ -541,6 +545,7 @@ class LawnCoordinator:
             temp_nu=temp_now,
             regen_nu_mmh=regen_nu,
             regen_komt_binnen_min=regen_binnen_min,
+            regen_avond=regen_avond,
         )
         params = self._build_params()
         plan = calculate(inputs, params)
@@ -639,6 +644,7 @@ class LawnCoordinator:
             toplaag_risico_drempel=v("toplaag_risico_drempel"),
             max_beurten_per_dag=v("max_beurten_per_dag"),
             regen_soon_min=v("regen_binnen_minuten"),
+            min_regen_voor_overslaan=v("min_regen_voor_overslaan"),
         )
 
     # -- waterbalans -------------------------------------------------------

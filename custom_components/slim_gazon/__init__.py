@@ -40,6 +40,7 @@ SCENARIOS = [
     "s3_kiemend_4mm_heet_wind",
     "s4_net_ingezaaid_regen_komt",
     "s5_jong_5mm_halfbewolkt",
+    "s6_net_ingezaaid_avondregen",
     "automatisering_uit",
     "sensoren_onbekend",
 ]
@@ -231,6 +232,13 @@ def _scenario_overrides(scenario: str) -> dict:
         "s5_jong_5mm_halfbewolkt": {
             "fase": "jong_gras", "temp_max": 24, "temp_nu": 24, "regen_24u": 5,
             "straling": 300, "uv_index": 3, "luchtvochtigheid": 65, "bewolkt_of_nat": True,
+        },
+        # 6. Net ingezaaid, geen nachtregen, heet (middag), maar 5 mm regen verwacht
+        #    vanavond -> ochtend/overdag wel, avondbeurt overslaan.
+        "s6_net_ingezaaid_avondregen": {
+            "fase": "pas_ingezaaid", "temp_max": 27, "temp_nu": 27, "regen_24u": 0,
+            "straling": 700, "uv_index": 7, "luchtvochtigheid": 45, "regen_avond": 5,
+            "bewolkt_of_nat": False,
         },
     }
     if scenario in detailed:

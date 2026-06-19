@@ -428,6 +428,16 @@ NUMBER_PARAMS: tuple[NumberParam, ...] = (
         unit="min",
         icon="mdi:weather-rainy",
     ),
+    NumberParam(
+        key="min_regen_voor_overslaan",
+        name="Min. regen om beurt over te slaan",
+        default=3.0,
+        min=0.0,
+        max=20.0,
+        step=0.5,
+        unit="mm",
+        icon="mdi:weather-pouring",
+    ),
 )
 
 # Snelle opzoeklijst van defaults op sleutel.

@@ -48,6 +48,12 @@ HOT_DRY_TEMP_C = 25.0
 # Fases waarvoor toplaag-onderhoud geldt (i.p.v. diepe bewatering).
 TOPLAAG_PHASES = (PHASE_NEW, PHASE_GERM)
 
+# Tijdvakken voor toplaag-onderhoud: een beurt vóór dit uur telt als "vroege
+# ochtend" (mag vervallen bij genoeg nachtregen); een beurt vanaf dit uur telt
+# als "avond" (mag vervallen bij verwachte avondregen). Daartussen = overdag.
+TOPLAAG_MORNING_END_H = 9
+TOPLAAG_EVENING_START_H = 18
+
 
 def _round(value: float, ndigits: int = 0) -> float:
     """Rond af zoals Jinja's `round` filter (half naar boven)."""
@@ -84,6 +90,8 @@ class PlanInputs:
     temp_nu: float | None = None
     regen_nu_mmh: float = 0.0
     regen_komt_binnen_min: float | None = None
+    # Verwachte regen vanavond (mm), voor het overslaan van de avondbeurt.
+    regen_avond: float = 0.0
 
 
 @dataclass(slots=True)
@@ -112,6 +120,7 @@ class PlanParams:
     toplaag_risico_drempel: float = 50.0
     max_beurten_per_dag: float = 4.0
     regen_soon_min: float = 90.0
+    min_regen_voor_overslaan: float = 3.0
 
 
 @dataclass(slots=True)
@@ -266,9 +275,9 @@ def calculate_top_layer_dry_risk(inputs: PlanInputs, params: PlanParams) -> floa
 
 
 def should_do_maintenance_watering(
-    inputs: PlanInputs, params: PlanParams, dry_risk: float
+    inputs: PlanInputs, params: PlanParams
 ) -> tuple[bool, str]:
-    """Bepaal of een korte toplaag-onderhoudsbeurt nu zinvol is (met uitleg)."""
+    """Mogen we nu überhaupt toplaag-onderhoud doen? (de algemene failsafes)."""
     if not inputs.automatisering_aan:
         return False, "automatisch sproeien staat uit"
     if inputs.wind_dag_max >= params.wind_stop:
@@ -281,21 +290,50 @@ def should_do_maintenance_watering(
     ):
         return (
             False,
-            f"regen binnen {int(inputs.regen_komt_binnen_min)} min verwacht — beurt uitgesteld",
+            f"regen binnen {int(inputs.regen_komt_binnen_min)} min verwacht — uitgesteld",
         )
     if inputs.bodemvocht >= 0 and inputs.bodemvocht >= params.bodemvocht_nat:
         return False, f"bodem is nat ({inputs.bodemvocht}%) — toplaag nog vochtig"
-    if dry_risk < params.toplaag_risico_drempel:
-        return (
-            False,
-            f"toplaag-risico {dry_risk}% onder drempel {params.toplaag_risico_drempel}% "
-            "— toplaag blijft voorlopig vochtig genoeg",
-        )
-    return (
-        True,
-        f"toplaag-risico {dry_risk}% ≥ drempel {params.toplaag_risico_drempel}% "
-        "— korte onderhoudsbeurt om de bovenlaag vochtig te houden",
-    )
+    return True, "toplaag-onderhoud toegestaan"
+
+
+def _slot_active(
+    hour: int, dry_risk: float, inputs: PlanInputs, params: PlanParams
+) -> tuple[bool, str]:
+    """Beslis per beurt-tijdvak of de korte beurt nodig is (met uitleg).
+
+    Vroege ochtend: vervalt bij genoeg nachtregen. Avond: vervalt bij verwachte
+    avondregen. Overdag: alleen sproeien als de toplaag dreigt uit te drogen
+    (risico ≥ drempel) — juist bij felle zon.
+    """
+    genoeg = params.min_regen_voor_overslaan
+    if hour < TOPLAAG_MORNING_END_H:
+        if inputs.regen_24u >= genoeg:
+            return (
+                False,
+                f"vroege ochtend overgeslagen: {inputs.regen_24u} mm nachtregen (≥ {genoeg} mm)",
+            )
+        return True, "vroege ochtend: bovenlaag alvast vochtig maken"
+    if hour >= TOPLAAG_EVENING_START_H:
+        if inputs.regen_avond >= genoeg:
+            return (
+                False,
+                f"avond overgeslagen: {inputs.regen_avond} mm regen verwacht vanavond",
+            )
+        return True, "avond: bovenlaag vochtig de nacht in"
+    if dry_risk >= params.toplaag_risico_drempel:
+        return True, f"overdag vochtig houden (risico {dry_risk}% ≥ {params.toplaag_risico_drempel}%)"
+    return False, f"overdag: risico {dry_risk}% onder drempel — bovenlaag blijft vochtig"
+
+
+def _pick_times(times: tuple[str, ...], count: int) -> tuple[str, ...]:
+    """Kies `count` momenten uit `times`, met altijd de eerste en laatste erbij."""
+    if count >= len(times):
+        return times
+    if count <= 1:
+        return (times[0],)
+    idxs = sorted({round(i * (len(times) - 1) / (count - 1)) for i in range(count)})
+    return tuple(times[i] for i in idxs)
 
 
 def _hhmm_to_min(value: str) -> int:
@@ -327,53 +365,79 @@ def _beat_minutes(mm_per_beat: float, params: PlanParams) -> tuple[float, float]
 
 
 def _maintenance_plan(inputs: PlanInputs, params: PlanParams) -> Plan:
-    """Toplaag-onderhoud voor net ingezaaid en kiemend gras (korte beurten)."""
+    """Toplaag-onderhoud voor net ingezaaid en kiemend gras (korte beurten).
+
+    Per beurt-tijdvak: vroege ochtend overslaan bij genoeg nachtregen, avond
+    overslaan bij verwachte avondregen, overdag vochtig houden bij uitdroogrisico.
+    """
     temp_range = _temp_range(inputs.temp_max)
     cell = _cell(inputs.fase, inputs.temp_max)
     carry = max(0.0, _round(inputs.carry_mm, 1))
     rain_credit = calculate_rain_credit(inputs, params, toplaag=True)
     dry_risk = calculate_top_layer_dry_risk(inputs, params)
-    do, decision = should_do_maintenance_watering(inputs, params, dry_risk)
+    allowed, gate_reason = should_do_maintenance_watering(inputs, params)
 
-    n_advies = len(cell.times) if cell else 0
     n_max = int(max(1, min(SLOT_COUNT, round(params.max_beurten_per_dag))))
-    count = min(n_advies, n_max) if (do and cell) else 0
+    times = _pick_times(cell.times, n_max) if cell else ()
 
     max_mm = max(
         params.min_mm_per_beurt,
         min(params.max_minuten, params.max_runtime) * params.grote_rate,
     )
-    mm_per_beat = _round(min(cell.depth, max_mm), 2) if count else 0.0
+    mm_per_beat = _round(min(cell.depth, max_mm), 2) if cell else 0.0
     if 0 < mm_per_beat < params.min_mm_per_beurt:
         mm_per_beat = _round(params.min_mm_per_beurt, 2)
     big, small = _beat_minutes(mm_per_beat, params)
 
+    genoeg = params.min_regen_voor_overslaan
+    morning_skipped = evening_skipped = False
     slots: list[Slot] = []
-    for i in range(count):
+    for i, t in enumerate(times):
+        hour = int(t.split(":")[0])
+        if allowed:
+            active, why = _slot_active(hour, dry_risk, inputs, params)
+        else:
+            active, why = False, gate_reason
+        if not active and allowed:
+            if hour < TOPLAAG_MORNING_END_H and inputs.regen_24u >= genoeg:
+                morning_skipped = True
+            elif hour >= TOPLAAG_EVENING_START_H and inputs.regen_avond >= genoeg:
+                evening_skipped = True
         slots.append(
             Slot(
                 index=i + 1,
-                time=_slot_time(cell.times, i),
-                mm=mm_per_beat,
-                big_minutes=big,
-                small_minutes=small,
-                active=True,
-                reason=decision[:100],
+                time=f"{t}:00",
+                mm=mm_per_beat if active else 0.0,
+                big_minutes=big if active else 0.0,
+                small_minutes=small if active else 0.0,
+                active=active,
+                reason=why[:100],
             )
         )
 
+    count = sum(1 for s in slots if s.active)
     total_mm = _round(mm_per_beat * count, 1)
-    buffer_txt = (
-        f"nachtregen/regen meegeteld als buffer: {rain_credit} mm. " if rain_credit > 0 else ""
-    )
-    reason = f"{inputs.fase}; toplaag-onderhoud; {buffer_txt}{decision}"
-    if do:
-        summary = (
-            f"{count}× korte beurt {mm_per_beat} mm (totaal {total_mm} mm); "
-            f"toplaag-risico {dry_risk}%. {decision}"
-        )[:255]
+
+    if not allowed:
+        decision = gate_reason
+    elif count == 0:
+        decision = f"geen onderhoudsbeurt nu; toplaag-risico {dry_risk}%"
     else:
-        summary = f"geen onderhoudsbeurt; toplaag-risico {dry_risk}%. {decision}"[:255]
+        notes = []
+        if morning_skipped:
+            notes.append("vroege ochtend overgeslagen door nachtregen")
+        if evening_skipped:
+            notes.append("avond overgeslagen door verwachte regen")
+        decision = f"{count} korte onderhoudsbeurt(en); toplaag-risico {dry_risk}%"
+        if notes:
+            decision += "; " + ", ".join(notes)
+
+    buffer_txt = f"nachtregen/regen als buffer: {rain_credit} mm. " if rain_credit > 0 else ""
+    reason = f"{inputs.fase}; toplaag-onderhoud; {buffer_txt}{decision}"
+    summary = (
+        f"{count}× korte beurt {mm_per_beat} mm (totaal {total_mm} mm); "
+        f"toplaag-risico {dry_risk}%. {decision}"
+    )[:255]
 
     return Plan(
         temp_range=temp_range,
