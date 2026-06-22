@@ -384,7 +384,11 @@ def _maintenance_plan(inputs: PlanInputs, params: PlanParams) -> Plan:
         params.min_mm_per_beurt,
         min(params.max_minuten, params.max_runtime) * params.grote_rate,
     )
-    mm_per_beat = _round(min(cell.depth, max_mm), 2) if cell else 0.0
+    # De sproei-factor schaalt ook de toplaag-beurt (de globale "meer/minder
+    # water"-knop), net als bij diepe bewatering. dry_risk bepaalt de frequentie
+    # (wanneer er een beurt nodig is), de factor de hoeveelheid per beurt.
+    streef_mm = cell.depth * params.factor if cell else 0.0
+    mm_per_beat = _round(min(streef_mm, max_mm), 2) if cell else 0.0
     if 0 < mm_per_beat < params.min_mm_per_beurt:
         mm_per_beat = _round(params.min_mm_per_beurt, 2)
     big, small = _beat_minutes(mm_per_beat, params)
